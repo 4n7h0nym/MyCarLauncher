@@ -5,7 +5,15 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [RecentDestinationEntity::class, SavedDestinationEntity::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        RecentDestinationEntity::class,
+        SavedDestinationEntity::class,
+        OfflineRegionEntity::class
+    ],
+    version = 3,
+    exportSchema = false
+)
 abstract class NavigationDatabase : RoomDatabase() {
     abstract fun navigationDao(): NavigationDao
 

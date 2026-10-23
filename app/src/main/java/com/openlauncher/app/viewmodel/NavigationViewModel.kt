@@ -538,6 +538,10 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             list.addAll(searchNearbyNominatim(query, loc, limit = 6))
         }
 
+        if (list.isEmpty()) {
+            list.addAll(searchLocalDatabaseAndGeocoder(query, loc))
+        }
+
         return list.distinctBy { it.address }.sortedBy { it.distanceKm }
     }
 
@@ -672,6 +676,52 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     fun dismissBottomSheet() {
         _uiState.update { it.copy(isBottomSheetVisible = false) }
+    }
+
+    private suspend fun searchLocalDatabaseAndGeocoder(query: String, loc: LocationData?): List<MapboxPoiResult> {
+        return withContext(Dispatchers.IO) {
+            val results = mutableListOf<MapboxPoiResult>()
+            val q = query.lowercase()
+
+            val currentState = _uiState.value
+            val matchesRecents = currentState.recentDestinations.filter { it.name.lowercase().contains(q) || it.address.lowercase().contains(q) }
+            val matchesSaved = currentState.savedPlaces.filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }.map {
+                MapboxPoiResult(
+                    id = it.id,
+                    name = it.label,
+                    category = "Favori",
+                    address = it.address,
+                    point = it.point ?: MapboxLocationPoint(48.8566, 2.3522)
+                )
+            }
+            results.addAll(matchesRecents)
+            results.addAll(matchesSaved)
+
+            try {
+                val geocoder = Geocoder(getApplication(), Locale.getDefault())
+                val addresses = geocoder.getFromLocationName(query, 5)
+                addresses?.forEachIndexed { index, addr ->
+                    val lat = addr.latitude
+                    val lon = addr.longitude
+                    val name = addr.featureName ?: addr.locality ?: query
+                    val addressStr = addr.getAddressLine(0) ?: query
+                    val dist = loc?.let { computeDistanceKm(it.latitude, it.longitude, lat, lon) } ?: 0f
+
+                    results.add(
+                        MapboxPoiResult(
+                            id = "geo_$index",
+                            name = name,
+                            category = "Adresse locale",
+                            address = addressStr,
+                            point = MapboxLocationPoint(lat, lon),
+                            distanceKm = dist
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+
+            results
+        }
     }
 
     private fun rankResultsByPrefixAndDistance(results: List<MapboxPoiResult>, query: String): List<MapboxPoiResult> {
