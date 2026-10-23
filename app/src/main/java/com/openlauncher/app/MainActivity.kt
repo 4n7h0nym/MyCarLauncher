@@ -282,6 +282,11 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.fillMaxSize()
                                     )
 
+                                    NavDestination.OFFLINE_MAPS -> OfflineManagerScreen(
+                                        accent   = accent,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+
                                     NavDestination.NAVIGATION -> NavigationScreen(
                                         apps         = apps,
                                         location     = location,

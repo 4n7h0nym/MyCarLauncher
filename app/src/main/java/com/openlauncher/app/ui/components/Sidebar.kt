@@ -153,6 +153,7 @@ fun Sidebar(
                     NavButton(Icons.Default.Home,       "Home",     currentDest == NavDestination.HOME,        accent, iconInactive, true) { onNavigate(NavDestination.HOME) }
                     NavButton(Icons.Default.Radio,      "Radio",    currentDest == NavDestination.RADIO,       accent, iconInactive, true) { onNavigate(NavDestination.RADIO) }
                     NavButton(Icons.Default.MusicNote,  "Media",    currentDest == NavDestination.MEDIA,       accent, iconInactive, true) { onNavigate(NavDestination.MEDIA) }
+                    NavButton(Icons.Default.CloudDownload, "Offline", currentDest == NavDestination.OFFLINE_MAPS, accent, iconInactive, true) { onNavigate(NavDestination.OFFLINE_MAPS) }
                     NavButton(Icons.Default.Apps,       "Apps",     currentDest == NavDestination.APP_LIBRARY, accent, iconInactive, true) { onNavigate(NavDestination.APP_LIBRARY) }
                     NavButton(Icons.Default.Navigation, "Nav",      currentDest == NavDestination.NAVIGATION,  accent, iconInactive, true) { onNavigate(NavDestination.NAVIGATION) }
                     NavButton(Icons.Default.Settings,   "Settings", currentDest == NavDestination.SETTINGS,    accent, iconInactive, true) { onNavigate(NavDestination.SETTINGS) }
@@ -160,6 +161,7 @@ fun Sidebar(
                     NavButton(Icons.Default.Settings,   "Settings", currentDest == NavDestination.SETTINGS,    accent, iconInactive, true) { onNavigate(NavDestination.SETTINGS) }
                     NavButton(Icons.Default.Navigation, "Nav",      currentDest == NavDestination.NAVIGATION,  accent, iconInactive, true) { onNavigate(NavDestination.NAVIGATION) }
                     NavButton(Icons.Default.Apps,       "Apps",     currentDest == NavDestination.APP_LIBRARY, accent, iconInactive, true) { onNavigate(NavDestination.APP_LIBRARY) }
+                    NavButton(Icons.Default.CloudDownload, "Offline", currentDest == NavDestination.OFFLINE_MAPS, accent, iconInactive, true) { onNavigate(NavDestination.OFFLINE_MAPS) }
                     NavButton(Icons.Default.MusicNote,  "Media",    currentDest == NavDestination.MEDIA,       accent, iconInactive, true) { onNavigate(NavDestination.MEDIA) }
                     NavButton(Icons.Default.Radio,      "Radio",    currentDest == NavDestination.RADIO,       accent, iconInactive, true) { onNavigate(NavDestination.RADIO) }
                     NavButton(Icons.Default.Home,       "Home",     currentDest == NavDestination.HOME,        accent, iconInactive, true) { onNavigate(NavDestination.HOME) }
@@ -226,6 +228,15 @@ fun Sidebar(
                     iconInactive = iconInactive,
                     isHorizontal = false,
                     onClick      = { onNavigate(NavDestination.NAVIGATION) }
+                )
+                NavButton(
+                    icon         = Icons.Default.CloudDownload,
+                    label        = "Offline",
+                    isActive     = currentDest == NavDestination.OFFLINE_MAPS,
+                    accent       = accent,
+                    iconInactive = iconInactive,
+                    isHorizontal = false,
+                    onClick      = { onNavigate(NavDestination.OFFLINE_MAPS) }
                 )
                 HorizontalDivider(color = dividerColor, modifier = Modifier.padding(vertical = 4.dp))
                 shortcutsContent()

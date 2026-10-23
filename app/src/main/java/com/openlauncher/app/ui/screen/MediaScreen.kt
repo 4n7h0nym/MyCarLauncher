@@ -160,28 +160,6 @@ fun MediaScreen(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-
-                    // Top-right secondary actions (Lyrics / Queue)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconButton(
-                            onClick = {},
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(cardBorder.copy(alpha = 0.15f))
-                        ) {
-                            Icon(Icons.Default.Subtitles, "Paroles", tint = textColor, modifier = Modifier.size(20.dp))
-                        }
-                        IconButton(
-                            onClick = {},
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(cardBorder.copy(alpha = 0.15f))
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.QueueMusic, "File d'attente", tint = textColor, modifier = Modifier.size(20.dp))
-                        }
-                    }
                 }
 
                 // Middle Progress Bar & Audio Quality Tag
@@ -212,19 +190,6 @@ fun MediaScreen(
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
                         )
-
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = cardBorder.copy(alpha = 0.2f)
-                        ) {
-                            Text(
-                                text = "44.1 kHz · 257 kbps · M4A",
-                                color = mutedColor,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                            )
-                        }
 
                         Text(
                             text = formatMillis(durationMs),
@@ -283,27 +248,6 @@ fun MediaScreen(
                             .height(72.dp)
                     ) {
                         Icon(Icons.Default.SkipNext, "Suivant", tint = textColor, modifier = Modifier.size(32.dp))
-                    }
-                }
-
-                // Secondary Bottom Row Controls (Shuffle, Repeat, Favorite)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(cardBorder.copy(alpha = 0.15f))
-                        .padding(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(onClick = {}) {
-                        Icon(Icons.Default.Shuffle, "Aléatoire", tint = mutedColor, modifier = Modifier.size(24.dp))
-                    }
-                    IconButton(onClick = {}) {
-                        Icon(Icons.Default.Repeat, "Répéter", tint = mutedColor, modifier = Modifier.size(24.dp))
-                    }
-                    IconButton(onClick = {}) {
-                        Icon(Icons.Default.FavoriteBorder, "Favori", tint = accent, modifier = Modifier.size(24.dp))
                     }
                 }
             }
