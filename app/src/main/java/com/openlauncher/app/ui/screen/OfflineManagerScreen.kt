@@ -28,9 +28,13 @@ import androidx.compose.ui.unit.sp
 import com.mapbox.common.TileRegionLoadProgress
 import com.mapbox.common.TileRegionLoadOptions
 import com.mapbox.common.TileStore
+import com.mapbox.common.MapboxOptions
+import com.mapbox.maps.mapsOptions
 import com.mapbox.geojson.Point
 import com.mapbox.geojson.Polygon
 import com.mapbox.maps.OfflineManager
+import com.mapbox.maps.GlyphsRasterizationMode
+import com.mapbox.maps.StylePackLoadOptions
 import com.mapbox.maps.TilesetDescriptorOptions
 import com.openlauncher.app.data.room.NavigationDatabase
 import com.openlauncher.app.data.room.OfflineRegionEntity
@@ -183,17 +187,33 @@ class OfflineManagerViewModel(context: Context) {
                     "offline_tiles"
                 ).absolutePath
             )
+            MapboxOptions.mapsOptions.tileStore = tileStore
 
             val offlineManager = OfflineManager()
 
-            val descriptor =
+            // Cache les ressources de style utilisées par la carte (jour/nuit) en plus des tuiles.
+            val styles = listOf(com.mapbox.maps.Style.MAPBOX_STREETS, com.mapbox.maps.Style.DARK)
+            styles.forEach { styleUri ->
+                offlineManager.loadStylePack(
+                    styleUri,
+                    StylePackLoadOptions.Builder()
+                        .glyphsRasterizationMode(GlyphsRasterizationMode.IDEOGRAPHS_RASTERIZED_LOCALLY)
+                        .build(),
+                    {},
+                    {}
+                )
+            }
+
+            val descriptors = styles.map { styleUri ->
                 offlineManager.createTilesetDescriptor(
                     TilesetDescriptorOptions.Builder()
-                        .styleURI(com.mapbox.maps.Style.STANDARD)
-                        .minZoom(0.toInt().toByte())
-                        .maxZoom(14.toInt().toByte()) // Zoom ajusté à 14 pour équilibrer la taille mondiale
+                        .styleURI(styleUri)
+                        .pixelRatio(appContext.resources.displayMetrics.density)
+                        .minZoom(0.toByte())
+                        .maxZoom(14.toByte())
                         .build()
                 )
+            }
 
             val geometry =
                 createBoundingBoxPolygon(
@@ -206,7 +226,7 @@ class OfflineManagerViewModel(context: Context) {
             val loadOptions =
                 TileRegionLoadOptions.Builder()
                     .geometry(geometry)
-                    .descriptors(listOf(descriptor))
+                    .descriptors(descriptors)
                     .acceptExpired(true)
                     .build()
 
@@ -281,6 +301,7 @@ class OfflineManagerViewModel(context: Context) {
                 "offline_tiles"
             ).absolutePath
         )
+        MapboxOptions.mapsOptions.tileStore = tileStore
 
         tileStore.removeTileRegion(id) {
             CoroutineScope(Dispatchers.IO).launch {

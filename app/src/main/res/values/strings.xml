@@ -4,10 +4,4 @@
     <string name="settings_label">Open Launcher Settings</string>
     <string name="media_label">Open Launcher Media</string>
 
-    <!--
-      TOKEN MAPBOX ACCESS TOKEN
-      Remplacez la valeur ci-dessous par votre propre token d'accès public Mapbox (commençant par pk.eyJ...)
-      Lien d'obtention : https://account.mapbox.com/
-    -->
-    <string name="mapbox_access_token" translatable="false">sk.eyJ1IjoiYW43aDAiLCJhIjoiY212anU1bTRrMDM1MDJ5cHVmMWpoeHJieCJ9.Qs5yZmbMP15eK47mu-4kOw</string>
 </resources>

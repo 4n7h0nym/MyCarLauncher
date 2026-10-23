@@ -68,12 +68,9 @@ fun TripTrackerWidget(
     var accelTimeDisplay by remember { mutableStateOf("0.00s") }
     var bestAccelTime by rememberSaveable { mutableStateOf<Float?>(null) }
     
-    var simSpeed by remember { mutableFloatStateOf(0f) }
-    var isSimulating by remember { mutableStateOf(false) }
-
     val currentSpeedMps = location?.speedMps ?: 0f
-    val speedDisplay = if (isSimulating) simSpeed else (if (isMetric) currentSpeedMps * 3.6f else currentSpeedMps * 2.23694f)
-    val targetSpeed = if (isMetric) 100f else 60f
+    val speedDisplay = if (isMetric) currentSpeedMps * 3.6f else currentSpeedMps * 2.23694f
+    val targetSpeed = if (isMetric) 100f else 62.1371f
     val targetSpeedUnit = if (isMetric) "KM/H" else "MPH"
 
     // High precision stopwatch update loop
@@ -93,7 +90,7 @@ fun TripTrackerWidget(
 
     // GPS real-time speed run tracking
     LaunchedEffect(location, activeMode) {
-        if (activeMode == "0-100" && !isSimulating) {
+        if (activeMode == "0-100") {
             val speed = location?.speedMps ?: 0f
             val speedDisplayVal = if (isMetric) speed * 3.6f else speed * 2.23694f
             
@@ -110,31 +107,6 @@ fun TripTrackerWidget(
                     bestAccelTime = if (bestAccelTime == null) finalTime else minOf(bestAccelTime!!, finalTime)
                 }
             }
-        }
-    }
-
-    // Playful local test simulation loop (triggers when tapping speed layout while READY)
-    LaunchedEffect(isSimulating) {
-        if (isSimulating) {
-            accelStartTime = android.os.SystemClock.elapsedRealtime()
-            accelState = "RUNNING"
-            val simTarget = if (isMetric) 100f else 60f
-            simSpeed = 0f
-            while (simSpeed < simTarget + 5f && isSimulating && accelState == "RUNNING") {
-                delay(30)
-                val elapsed = (android.os.SystemClock.elapsedRealtime() - accelStartTime) / 1000f
-                simSpeed = elapsed * elapsed * 2.8f + elapsed * 8f
-                if (simSpeed >= simTarget) {
-                    accelEndTime = android.os.SystemClock.elapsedRealtime()
-                    accelState = "COMPLETE"
-                    val finalTime = (accelEndTime - accelStartTime) / 1000f
-                    bestAccelTime = if (bestAccelTime == null) finalTime else minOf(bestAccelTime!!, finalTime)
-                    break
-                }
-            }
-            isSimulating = false
-        } else {
-            simSpeed = 0f
         }
     }
 
@@ -413,7 +385,7 @@ fun TripTrackerWidget(
                         )
                         Text(
                             text = "[RUNNING]",
-                            color = if (accelState == "RUNNING" || isSimulating) Color(0xFFE6A23C) else dimDisplayColor,
+                            color = if (accelState == "RUNNING") Color(0xFFE6A23C) else dimDisplayColor,
                             fontSize = 6.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
@@ -430,10 +402,7 @@ fun TripTrackerWidget(
 
                 Column(
                     modifier = Modifier
-                        .weight(0.52f)
-                        .clickable(enabled = accelState == "READY") {
-                            isSimulating = true
-                        },
+                        .weight(0.52f),
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.End
                 ) {
@@ -479,8 +448,8 @@ fun TripTrackerWidget(
                     
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = if (accelState == "READY" && !isSimulating) "TAP SPEED TO TEST" else "BEST RECORD",
-                            color = if (accelState == "READY" && !isSimulating) activeAccent.copy(alpha = 0.7f) else labelColor,
+                            text = if (accelState == "READY") "GPS TEST READY" else "BEST RECORD",
+                            color = if (accelState == "READY") activeAccent.copy(alpha = 0.7f) else labelColor,
                             fontSize = 5.5.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -506,14 +475,13 @@ fun TripTrackerWidget(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Button 1: OPR / RUN styled as a flat dynamic circular cap
-            val oprActive = if (activeMode == "0-100") (accelState == "RUNNING" || isSimulating) else isRunning
+            val oprActive = if (activeMode == "0-100") accelState == "RUNNING" else isRunning
             TeTactileButton(
                 label = "OPR",
                 keyColor = activeAccent,
                 active = oprActive,
                 onClick = {
                     if (activeMode == "0-100") {
-                        isSimulating = false
                         accelState = "READY"
                         accelStartTime = 0L
                         accelEndTime = 0L
@@ -537,7 +505,6 @@ fun TripTrackerWidget(
                 enabled = canReset,
                 onClick = {
                     if (activeMode == "0-100") {
-                        isSimulating = false
                         accelState = "READY"
                         accelStartTime = 0L
                         accelEndTime = 0L

@@ -89,17 +89,59 @@ fun NavigationScreen(
     Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
 
         // ── 1. CARTE MAPBOX INTERACTIVE 100% PLEIN ÉCRAN ─────────────────────
-        MapboxFullInteractiveMap(
-            location = location,
-            bearing = bearing,
-            destinationPoint = uiState.selectedDestination?.point,
-            routePoints = uiState.routePoints,
-            isDayMode = isDayMode,
-            isSplitSearchOpen = uiState.isSplitSearchOpen,
-            triggerRecenter = uiState.triggerRecenter,
-            accent = accent,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (uiState.hasMapboxToken) {
+            MapboxFullInteractiveMap(
+                location = location,
+                bearing = bearing,
+                destinationPoint = uiState.selectedDestination?.point,
+                routePoints = uiState.routePoints,
+                isDayMode = isDayMode,
+                isSplitSearchOpen = uiState.isSplitSearchOpen,
+                triggerRecenter = uiState.triggerRecenter,
+                accent = accent,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxSize().padding(32.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = cardBg.copy(alpha = 0.98f),
+                tonalElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(28.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Configuration Mapbox requise", color = textColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Le jeton public Mapbox est absent ou invalide. Ajoute MAPBOX_PUBLIC_TOKEN=pk.… dans %USERPROFILE%\\.gradle\\gradle.properties, puis synchronise et reconstruis le projet.",
+                        color = mutedColor,
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
+        uiState.routeError?.let { message ->
+            Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(20.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = cardBg.copy(alpha = 0.97f),
+                tonalElevation = 8.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(message, color = textColor, fontSize = 12.sp)
+                    IconButton(onClick = navViewModel::clearRouteError) {
+                        Icon(Icons.Default.Close, contentDescription = "Fermer", tint = mutedColor)
+                    }
+                }
+            }
+        }
 
         // ── 2. ÉTAT A : MODE RECHERCHE / REPOS (HORS NAVIGATION) ─────────────
         AnimatedVisibility(

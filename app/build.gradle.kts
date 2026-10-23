@@ -15,6 +15,10 @@ android {
         targetSdk = 35
         versionCode = 6
         versionName = "0.0.5"
+        val mapboxPublicToken = providers.gradleProperty("MAPBOX_PUBLIC_TOKEN")
+            .orElse(providers.environmentVariable("MAPBOX_PUBLIC_TOKEN"))
+            .getOrElse("")
+        resValue("string", "mapbox_access_token", mapboxPublicToken)
     }
 
     buildTypes {

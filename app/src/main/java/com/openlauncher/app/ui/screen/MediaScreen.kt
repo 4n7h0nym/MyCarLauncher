@@ -36,7 +36,7 @@ fun MediaScreen(
     val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     var positionMs by remember { mutableLongStateOf(0L) }
-    val durationMs = state?.controller?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 218000L
+    val durationMs = state?.controller?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
 
     LaunchedEffect(state?.isPlaying, state?.title) {
         while (state?.isPlaying == true) {
@@ -45,10 +45,11 @@ fun MediaScreen(
         }
     }
 
-    val title = state?.title?.ifEmpty { null } ?: "Adore You"
-    val artist = state?.artist?.ifEmpty { null } ?: "Harry Styles"
+    val title = state?.title?.takeIf { it.isNotBlank() } ?: "Aucune lecture en cours"
+    val artist = state?.artist?.takeIf { it.isNotBlank() } ?: "Lancez une application musicale"
     val isPlaying = state?.isPlaying == true
     val controller = state?.controller
+    val hasMedia = controller != null
 
     Column(
         modifier = modifier
@@ -171,6 +172,7 @@ fun MediaScreen(
                             controller?.transportControls?.seekTo(newVal.toLong())
                         },
                         valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
+                        enabled = hasMedia && durationMs > 0L,
                         colors = SliderDefaults.colors(
                             thumbColor = accent,
                             activeTrackColor = accent,
@@ -192,7 +194,7 @@ fun MediaScreen(
                         )
 
                         Text(
-                            text = formatMillis(durationMs),
+                            text = if (durationMs > 0L) formatMillis(durationMs) else "--:--",
                             color = mutedColor,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
@@ -209,6 +211,7 @@ fun MediaScreen(
                     // Previous Button
                     Button(
                         onClick = { controller?.transportControls?.skipToPrevious() },
+                        enabled = hasMedia,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
                         modifier = Modifier
@@ -224,6 +227,7 @@ fun MediaScreen(
                             if (isPlaying) controller?.transportControls?.pause()
                             else controller?.transportControls?.play()
                         },
+                        enabled = hasMedia,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent),
                         modifier = Modifier
@@ -241,6 +245,7 @@ fun MediaScreen(
                     // Next Button
                     Button(
                         onClick = { controller?.transportControls?.skipToNext() },
+                        enabled = hasMedia,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
                         modifier = Modifier

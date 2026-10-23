@@ -28,8 +28,10 @@ dependencyResolutionManagement {
             credentials {
                 // Do not change Less Secure Password, it's always "mapbox"
                 username = "mapbox"
-                // Replace with your Mapbox Secret Downloads Token (starts with sk.eyJ...)
-                password = providers.gradleProperty("MAPBOX_DOWNLOADS_TOKEN").getOrElse("sk.eyJ1IjoiYW43aDAiLCJhIjoiY212anU1bTRrMDM1MDJ5cHVmMWpoeHJieCJ9.Qs5yZmbMP15eK47mu-4kOw")
+                // Provide your Mapbox Secret Downloads Token (sk.*) outside the repository.
+                password = providers.gradleProperty("MAPBOX_DOWNLOADS_TOKEN")
+                    .orElse(providers.environmentVariable("MAPBOX_DOWNLOADS_TOKEN"))
+                    .getOrElse("")
             }
         }
     }

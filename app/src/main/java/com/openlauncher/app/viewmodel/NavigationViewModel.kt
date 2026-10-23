@@ -7,6 +7,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mapbox.common.MapboxOptions
 import com.mapbox.common.TileStore
+import com.mapbox.maps.mapsOptions
+import java.io.File
 import com.openlauncher.app.R
 import com.openlauncher.app.data.room.NavigationRepository
 import com.openlauncher.app.model.*
@@ -44,16 +46,32 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun setupMapboxOfflineTileStore() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val token = getMapboxAccessToken()
-                if (token.isNotBlank()) {
-                    MapboxOptions.accessToken = token
+        try {
+            val token = getMapboxAccessToken().trim()
+            if (!token.startsWith("pk.") || token.length < 20) {
+                _uiState.update {
+                    it.copy(
+                        hasMapboxToken = false,
+                        offlineCacheStatus = "Jeton public Mapbox manquant ou invalide"
+                    )
                 }
-                tileStore = TileStore.create()
-                _uiState.update { it.copy(offlineCacheStatus = "Cache hors-ligne Mapbox TileStore actif") }
-            } catch (_: Exception) {
-                _uiState.update { it.copy(offlineCacheStatus = "Mode hors-ligne disponible via cache local") }
+                return
+            }
+            MapboxOptions.accessToken = token
+            tileStore = TileStore.create(File(getApplication<Application>().filesDir, "offline_tiles").absolutePath)
+            MapboxOptions.mapsOptions.tileStore = tileStore
+            _uiState.update {
+                it.copy(
+                    hasMapboxToken = true,
+                    offlineCacheStatus = "Cartes hors-ligne actives; calcul d’itinéraire en ligne"
+                )
+            }
+        } catch (_: Exception) {
+            _uiState.update {
+                it.copy(
+                    hasMapboxToken = false,
+                    offlineCacheStatus = "Impossible d’initialiser Mapbox"
+                )
             }
         }
     }
@@ -69,9 +87,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
         viewModelScope.launch {
             navRepository.savedDestinations.collect { saved ->
-                if (saved.isNotEmpty()) {
-                    _uiState.update { it.copy(savedPlaces = saved) }
-                }
+                _uiState.update { it.copy(savedPlaces = saved) }
             }
         }
     }
@@ -231,6 +247,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 isBottomSheetVisible = false,
                 isSearchFocused = false,
                 isSearching = true,
+                routeError = null,
                 suggestions = emptyList(),
                 isNavigating = true
             )
@@ -369,6 +386,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 routePoints = emptyList(),
                 nextManeuver = null,
                 etaInfo = null,
+                routeError = null,
                 selectedDestination = null,
                 searchQuery = "",
                 suggestions = emptyList(),
@@ -385,8 +403,24 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     // ── CALCUL D'ITINÉRAIRE MAPBOX ──────────────────────────────────────────
 
     private suspend fun calculateFastestRoute(dest: MapboxLocationPoint, currentLocation: LocationData?) {
-        val startLat = currentLocation?.latitude ?: (dest.latitude - 0.02)
-        val startLon = currentLocation?.longitude ?: (dest.longitude - 0.02)
+        if (currentLocation == null) {
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        isNavigating = false,
+                        isSearching = false,
+                        routePoints = emptyList(),
+                        etaInfo = null,
+                        nextManeuver = null,
+                        routeError = "Position GPS indisponible. Activez la localisation pour calculer l’itinéraire."
+                    )
+                }
+            }
+            return
+        }
+
+        val startLat = currentLocation.latitude
+        val startLon = currentLocation.longitude
         val destLon = dest.longitude
         val destLat = dest.latitude
 
@@ -477,7 +511,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                                 etaInfo = eta,
                                 nextManeuver = maneuver,
                                 isNavigating = true,
-                                isSearching = false
+                                isSearching = false,
+                                routeError = null
                             )
                         }
                     }
@@ -485,9 +520,25 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
 
-            withContext(Dispatchers.Main) { _uiState.update { it.copy(isSearching = false) } }
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        isNavigating = false,
+                        routeError = "Impossible de calculer l’itinéraire. Vérifiez la connexion et le jeton Mapbox."
+                    )
+                }
+            }
         } catch (_: Exception) {
-            withContext(Dispatchers.Main) { _uiState.update { it.copy(isSearching = false) } }
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        isNavigating = false,
+                        routeError = "Impossible de calculer l’itinéraire. Vérifiez la connexion et le jeton Mapbox."
+                    )
+                }
+            }
         }
     }
 
@@ -678,6 +729,10 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(isBottomSheetVisible = false) }
     }
 
+    fun clearRouteError() {
+        _uiState.update { it.copy(routeError = null) }
+    }
+
     private suspend fun searchLocalDatabaseAndGeocoder(query: String, loc: LocationData?): List<MapboxPoiResult> {
         return withContext(Dispatchers.IO) {
             val results = mutableListOf<MapboxPoiResult>()
@@ -685,14 +740,18 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
             val currentState = _uiState.value
             val matchesRecents = currentState.recentDestinations.filter { it.name.lowercase().contains(q) || it.address.lowercase().contains(q) }
-            val matchesSaved = currentState.savedPlaces.filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }.map {
-                MapboxPoiResult(
-                    id = it.id,
-                    name = it.label,
-                    category = "Favori",
-                    address = it.address,
-                    point = it.point ?: MapboxLocationPoint(48.8566, 2.3522)
-                )
+            val matchesSaved = currentState.savedPlaces
+                .filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }
+                .mapNotNull { place ->
+                    place.point?.let { point ->
+                        MapboxPoiResult(
+                            id = place.id,
+                            name = place.label,
+                            category = "Favori",
+                            address = place.address,
+                            point = point
+                        )
+                    }
             }
             results.addAll(matchesRecents)
             results.addAll(matchesSaved)
@@ -767,7 +826,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         return try {
             getApplication<Application>().getString(R.string.mapbox_access_token)
         } catch (_: Exception) {
-            "sk.eyJ1IjoiYW43aDAiLCJhIjoiY212anU1bTRrMDM1MDJ5cHVmMWpoeHJieCJ9.Qs5yZmbMP15eK47mu-4kOw"
+            ""
         }
     }
 }

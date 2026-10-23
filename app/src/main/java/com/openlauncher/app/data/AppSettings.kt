@@ -57,11 +57,7 @@ data class WidgetConfig(
     val enabled: Boolean = true
 )
 
-fun defaultSavedPlaces() = listOf(
-    SavedPlace("home", "Domicile", "HOME", "Avenue des Champs-Élysées, Paris", MapboxLocationPoint(48.8698, 2.3075)),
-    SavedPlace("work", "Travail", "WORK", "La Défense, Paris", MapboxLocationPoint(48.8924, 2.2361)),
-    SavedPlace("fav_gym", "Salle de sport", "STAR", "Place de la Bastille, Paris", MapboxLocationPoint(48.8530, 2.3691))
-)
+fun defaultSavedPlaces() = emptyList<SavedPlace>()
 
 data class AppSettings(
     val vehicleName: String = "MY CAR",
