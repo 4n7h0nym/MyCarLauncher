@@ -1,0 +1,40 @@
+# Built artifacts
+**/build/
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Release directory — binaries ignored, release notes tracked
+release/*.apk
+release/*.zip
+release/*.aab
+
+# Signing keys — never commit
+*.jks
+*.keystore
+keystore/
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+.navigation/
+
+# Gradle
+.gradle/
+build/
+local.properties
+
+# OS generated
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Kotlin
+.kotlin/

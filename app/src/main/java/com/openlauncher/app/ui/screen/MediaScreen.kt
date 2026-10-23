@@ -1,0 +1,317 @@
+package com.openlauncher.app.ui.screen
+
+import android.media.MediaMetadata
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.openlauncher.app.service.MediaListenerService
+import kotlinx.coroutines.delay
+
+@Composable
+fun MediaScreen(
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    val state by MediaListenerService.nowPlaying.collectAsState()
+    val cardBg     = MaterialTheme.colorScheme.surface
+    val cardBorder = MaterialTheme.colorScheme.outline
+    val textColor  = MaterialTheme.colorScheme.onBackground
+    val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
+
+    var positionMs by remember { mutableLongStateOf(0L) }
+    val durationMs = state?.controller?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 218000L
+
+    LaunchedEffect(state?.isPlaying, state?.title) {
+        while (state?.isPlaying == true) {
+            positionMs = state?.controller?.playbackState?.position ?: positionMs
+            delay(500)
+        }
+    }
+
+    val title = state?.title?.ifEmpty { null } ?: "Adore You"
+    val artist = state?.artist?.ifEmpty { null } ?: "Harry Styles"
+    val isPlaying = state?.isPlaying == true
+    val controller = state?.controller
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        // Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Icon(Icons.Default.MusicNote, null, tint = accent, modifier = Modifier.size(28.dp))
+                Column {
+                    Text(
+                        text = "BLUETOOTH MEDIA PLAYER (AVRCP)",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = textColor,
+                        fontSize = 16.sp,
+                        letterSpacing = 2.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Synchronized via Android MediaController & A2DP",
+                        color = mutedColor,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+        }
+
+        // Main Player Container (Split Left / Right matching reference photo)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .clip(RoundedCornerShape(28.dp))
+                .background(cardBg)
+                .border(1.dp, cardBorder, RoundedCornerShape(28.dp))
+                .padding(28.dp),
+            horizontalArrangement = Arrangement.spacedBy(32.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // ── ZONE GAUCHE : VISUEL / ARTWORK & CAROUSEL PEEK ────────────────
+            Row(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .width(340.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Main Artwork Card (Square with rounded corners)
+                Box(
+                    modifier = Modifier
+                        .size(280.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(cardBorder.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (state?.albumArt != null || state?.artUri != null) {
+                        AsyncImage(
+                            model = state?.artUri ?: state?.albumArt,
+                            contentDescription = "Album Art",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize().background(accent.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.MusicNote, null, tint = accent, modifier = Modifier.size(64.dp))
+                        }
+                    }
+                }
+            }
+
+            // ── ZONE DROITE : INFORMATIONS & CONTRÔLES ────────────────────────
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .weight(1f),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Top Meta & Actions
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = title,
+                            color = textColor,
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = artist,
+                            color = mutedColor,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Top-right secondary actions (Lyrics / Queue)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(
+                            onClick = {},
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(cardBorder.copy(alpha = 0.15f))
+                        ) {
+                            Icon(Icons.Default.Subtitles, "Paroles", tint = textColor, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(
+                            onClick = {},
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(cardBorder.copy(alpha = 0.15f))
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.QueueMusic, "File d'attente", tint = textColor, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
+
+                // Middle Progress Bar & Audio Quality Tag
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Slider(
+                        value = positionMs.toFloat(),
+                        onValueChange = { newVal ->
+                            positionMs = newVal.toLong()
+                            controller?.transportControls?.seekTo(newVal.toLong())
+                        },
+                        valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
+                        colors = SliderDefaults.colors(
+                            thumbColor = accent,
+                            activeTrackColor = accent,
+                            inactiveTrackColor = cardBorder.copy(alpha = 0.3f)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = formatMillis(positionMs),
+                            color = mutedColor,
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = cardBorder.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "44.1 kHz · 257 kbps · M4A",
+                                color = mutedColor,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        Text(
+                            text = formatMillis(durationMs),
+                            color = mutedColor,
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+
+                // Main Playback Controls
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Previous Button
+                    Button(
+                        onClick = { controller?.transportControls?.skipToPrevious() },
+                        shape = RoundedCornerShape(28.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(72.dp)
+                    ) {
+                        Icon(Icons.Default.SkipPrevious, "Précédent", tint = textColor, modifier = Modifier.size(32.dp))
+                    }
+
+                    // Play / Pause Button
+                    Button(
+                        onClick = {
+                            if (isPlaying) controller?.transportControls?.pause()
+                            else controller?.transportControls?.play()
+                        },
+                        shape = RoundedCornerShape(28.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accent),
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(72.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Lecture",
+                            tint = Color.Black,
+                            modifier = Modifier.size(36.dp)
+                        )
+                    }
+
+                    // Next Button
+                    Button(
+                        onClick = { controller?.transportControls?.skipToNext() },
+                        shape = RoundedCornerShape(28.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(72.dp)
+                    ) {
+                        Icon(Icons.Default.SkipNext, "Suivant", tint = textColor, modifier = Modifier.size(32.dp))
+                    }
+                }
+
+                // Secondary Bottom Row Controls (Shuffle, Repeat, Favorite)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(cardBorder.copy(alpha = 0.15f))
+                        .padding(horizontal = 24.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Default.Shuffle, "Aléatoire", tint = mutedColor, modifier = Modifier.size(24.dp))
+                    }
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Default.Repeat, "Répéter", tint = mutedColor, modifier = Modifier.size(24.dp))
+                    }
+                    IconButton(onClick = {}) {
+                        Icon(Icons.Default.FavoriteBorder, "Favori", tint = accent, modifier = Modifier.size(24.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatMillis(ms: Long): String {
+    val s = ms / 1000
+    return "%d:%02d".format(s / 60, s % 60)
+}
