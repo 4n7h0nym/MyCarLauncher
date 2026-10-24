@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
@@ -77,7 +79,7 @@ fun TelemetryWidget(
                         .graphicsLayer { rotationZ = -bearing },
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
+                    LocalizedLabel(
                         text     = "N",
                         color    = cardinalMain,
                         fontSize = 11.sp,
@@ -85,7 +87,7 @@ fun TelemetryWidget(
                             .align(Alignment.TopCenter)
                             .padding(top = (capturedMaxHeight / 2 - radius - 6.dp).coerceAtLeast(0.dp))
                     )
-                    Text(
+                    LocalizedLabel(
                         text     = "S",
                         color    = cardinalMain,
                         fontSize = 11.sp,
@@ -93,7 +95,7 @@ fun TelemetryWidget(
                             .align(Alignment.BottomCenter)
                             .padding(bottom = (capturedMaxHeight / 2 - radius - 6.dp).coerceAtLeast(0.dp))
                     )
-                    Text(
+                    LocalizedLabel(
                         text     = "E",
                         color    = cardinalSub,
                         fontSize = 9.sp,
@@ -101,7 +103,7 @@ fun TelemetryWidget(
                             .align(Alignment.CenterEnd)
                             .padding(end = (capturedMaxWidth / 2 - radius - 6.dp).coerceAtLeast(0.dp))
                     )
-                    Text(
+                    LocalizedLabel(
                         text     = "W",
                         color    = cardinalSub,
                         fontSize = 9.sp,
@@ -151,14 +153,14 @@ fun TelemetryWidget(
             verticalAlignment = Alignment.Bottom
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
+                LocalizedLabel(
                     text          = "LATITUDE",
                     style         = MaterialTheme.typography.labelSmall,
                     color         = subColor,
                     letterSpacing = 1.sp,
                     fontSize      = 7.sp
                 )
-                Text(
+                LocalizedLabel(
                     text     = if (location != null) formatLat(location.latitude) else "—",
                     color    = contentColor,
                     fontSize = 11.sp
@@ -168,7 +170,7 @@ fun TelemetryWidget(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
                 horizontalAlignment = Alignment.End
             ) {
-                Text(
+                LocalizedLabel(
                     text          = "LONGITUDE",
                     style         = MaterialTheme.typography.labelSmall,
                     color         = subColor,
@@ -176,7 +178,7 @@ fun TelemetryWidget(
                     fontSize      = 7.sp,
                     textAlign     = TextAlign.End
                 )
-                Text(
+                LocalizedLabel(
                     text      = if (location != null) formatLon(location.longitude) else "—",
                     color     = contentColor,
                     fontSize  = 11.sp,

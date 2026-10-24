@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.components
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -14,16 +16,16 @@ fun ConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text  = { Text(message, style = MaterialTheme.typography.bodyMedium) },
+        title = { LocalizedLabel(title) },
+        text  = { LocalizedLabel(message, style = MaterialTheme.typography.bodyMedium) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text(confirmLabel, color = Color(0xFFFF5252))
+                LocalizedLabel(confirmLabel, color = Color(0xFFFF5252))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("Cancel", color = Color(0xFFAAAAAA))
+                LocalizedLabel("Cancel", color = Color(0xFFAAAAAA))
             }
         },
         // The dialog surface is always dark, so pin light content colors —

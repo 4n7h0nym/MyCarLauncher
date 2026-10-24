@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import android.R
 import android.content.Context
 import android.hardware.Sensor
@@ -114,14 +116,14 @@ fun AltimeterWidget(
                 .padding(top = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(
+            LocalizedLabel(
                 text = "ALTITUDE",
                 color = labelColor,
                 fontSize = 7.sp,
                 letterSpacing = 1.sp,
                 fontWeight = FontWeight.Bold
             )
-            Text(
+            LocalizedLabel(
                 text = if (location != null) {
                     val altVal = if (isMetric) location.altitude else location.altitude * 3.28084
                     val unit = if (isMetric) "m" else "ft"
@@ -154,12 +156,12 @@ fun AltimeterWidget(
             verticalAlignment     = Alignment.Bottom
         ) {
             Column {
-                Text("ROLL",  color = labelColor, fontSize = 7.sp, letterSpacing = 1.sp)
-                Text("%.1f°".format(displayRoll),  color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                LocalizedLabel("ROLL",  color = labelColor, fontSize = 7.sp, letterSpacing = 1.sp)
+                LocalizedLabel("%.1f°".format(displayRoll),  color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("PITCH", color = labelColor, fontSize = 7.sp, letterSpacing = 1.sp, textAlign = TextAlign.End)
-                Text("%.1f°".format(displayPitch), color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
+                LocalizedLabel("PITCH", color = labelColor, fontSize = 7.sp, letterSpacing = 1.sp, textAlign = TextAlign.End)
+                LocalizedLabel("%.1f°".format(displayPitch), color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.End)
             }
         }
     }

@@ -1,10 +1,15 @@
 package com.openlauncher.app.ui.screen
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import android.Manifest
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -19,11 +24,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.viewinterop.AndroidView
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
@@ -32,7 +44,14 @@ import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.MapView
+import com.mapbox.common.MapboxOptions
 import com.mapbox.maps.Style
+import com.mapbox.maps.RenderedQueryGeometry
+import com.mapbox.maps.RenderedQueryOptions
+import com.mapbox.maps.extension.style.expressions.generated.Expression
+import com.mapbox.maps.extension.style.layers.addLayer
+import com.mapbox.maps.extension.style.layers.generated.SymbolLayer
+import com.mapbox.maps.extension.style.layers.properties.generated.TextAnchor
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.PointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
@@ -43,6 +62,8 @@ import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManag
 import com.mapbox.maps.plugin.locationcomponent.location
 import com.openlauncher.app.data.AppSettings
 import com.openlauncher.app.data.DayNightMode
+import com.openlauncher.app.data.MapThemeMode
+import com.openlauncher.app.data.UnitSystem
 import com.openlauncher.app.model.*
 import com.openlauncher.app.util.LocationData
 import com.openlauncher.app.viewmodel.NavigationViewModel
@@ -50,6 +71,7 @@ import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.gestures.OnMoveListener
 import com.mapbox.android.gestures.MoveGestureDetector
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
@@ -60,6 +82,7 @@ fun NavigationScreen(
     settings: AppSettings,
     accent: Color,
     navViewModel: NavigationViewModel,
+    onMapThemeModeChange: (MapThemeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val uiState by navViewModel.uiState.collectAsState()
@@ -69,6 +92,13 @@ fun NavigationScreen(
     val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     val isDayMode = settings.dayNightMode == DayNightMode.LIGHT
+    val isMapLightMode = when (settings.mapThemeMode) {
+        MapThemeMode.FOLLOW_APP -> isDayMode
+        MapThemeMode.LIGHT -> true
+        MapThemeMode.DARK -> false
+    }
+    val focusManager = LocalFocusManager.current
+    var searchPanelBounds by remember { mutableStateOf<Rect?>(null) }
 
     // Permissions GPS
     val locationPermissionState = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -85,64 +115,136 @@ fun NavigationScreen(
 
     var showAddFavoriteDialog by remember { mutableStateOf(false) }
     var editingPlace by remember { mutableStateOf<SavedPlace?>(null) }
+    var favoritePoiToAdd by remember { mutableStateOf<MapboxPoiResult?>(null) }
 
-    Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    fun previewPoi(poi: MapboxPoiResult) {
+        navViewModel.selectMapPoi(poi)
+        navViewModel.dismissBottomSheet()
+        navViewModel.updateSearchQuery("", location)
+        focusManager.clearFocus()
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .pointerInput(uiState.isSearchFocused, searchPanelBounds) {
+                awaitEachGesture {
+                    awaitFirstDown(pass = PointerEventPass.Initial, requireUnconsumed = false)
+                    val up = waitForUpOrCancellation(pass = PointerEventPass.Initial)
+                    if (up != null && uiState.isSearchFocused && searchPanelBounds?.contains(up.position) != true) {
+                        focusManager.clearFocus()
+                    }
+                }
+            }
+    ) {
 
         // ── 1. CARTE MAPBOX INTERACTIVE 100% PLEIN ÉCRAN ─────────────────────
-        if (uiState.hasMapboxToken) {
-            MapboxFullInteractiveMap(
-                location = location,
-                bearing = bearing,
-                destinationPoint = uiState.selectedDestination?.point,
-                routePoints = uiState.routePoints,
-                isDayMode = isDayMode,
-                isSplitSearchOpen = uiState.isSplitSearchOpen,
-                triggerRecenter = uiState.triggerRecenter,
-                accent = accent,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            Surface(
-                modifier = Modifier.fillMaxSize().padding(32.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = cardBg.copy(alpha = 0.98f),
-                tonalElevation = 6.dp
+        MapboxFullInteractiveMap(
+            location = location,
+            bearing = bearing,
+            destinationPoint = uiState.selectedDestination?.point,
+            routePoints = uiState.routePoints,
+            isDayMode = isMapLightMode,
+            isSplitSearchOpen = uiState.isSplitSearchOpen,
+            triggerRecenter = uiState.triggerRecenter,
+            accent = accent,
+            savedPlaces = uiState.savedPlaces,
+            onMapPoiSelected = { navViewModel.selectMapPoi(it) },
+            onMapTapped = { navViewModel.clearMapPoiSelection() },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Compact speed HUD layered over the map so the map remains full-screen.
+        val metricUnits = settings.unitSystem == UnitSystem.METRIC
+        val speedMps = location?.speedMps?.coerceAtLeast(0f)
+        val speedValue = speedMps?.let {
+            (it * if (metricUnits) 3.6f else 2.23694f).roundToInt()
+        }
+        val speedHudText = if (isMapLightMode) Color(0xFF151515) else Color.White
+        val speedHudMuted = if (isMapLightMode) Color(0xFF666666) else Color(0xFFBBBBBB)
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 18.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = if (isMapLightMode) Color.White.copy(alpha = 0.94f) else Color(0xEE111111),
+            tonalElevation = 6.dp,
+            shadowElevation = 8.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize().padding(28.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Configuration Mapbox requise", color = textColor, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Le jeton public Mapbox est absent ou invalide. Ajoute MAPBOX_PUBLIC_TOKEN=pk.… dans %USERPROFILE%\\.gradle\\gradle.properties, puis synchronise et reconstruis le projet.",
-                        color = mutedColor,
-                        fontSize = 14.sp
-                    )
-                }
+                Icon(Icons.Default.Speed, contentDescription = "Vitesse", tint = accent, modifier = Modifier.size(20.dp))
+                LocalizedLabel(
+                    text = speedValue?.toString() ?: "—",
+                    color = speedHudText,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                LocalizedLabel(
+                    text = if (metricUnits) "km/h" else "mph",
+                    color = speedHudMuted,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
 
-        uiState.routeError?.let { message ->
-            Surface(
-                modifier = Modifier.align(Alignment.BottomCenter).padding(20.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = cardBg.copy(alpha = 0.97f),
-                tonalElevation = 8.dp
+        uiState.selectedMapPoi?.let { poi ->
+            AnimatedVisibility(
+                visible = !uiState.isNavigating,
+                enter = fadeIn() + slideInVertically { it },
+                exit = fadeOut() + slideOutVertically { it },
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp)
             ) {
-                Row(
-                    modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = cardBg.copy(alpha = 0.97f),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 8.dp,
+                    modifier = Modifier.border(1.dp, cardBorder, RoundedCornerShape(18.dp))
                 ) {
-                    Text(message, color = textColor, fontSize = 12.sp)
-                    IconButton(onClick = navViewModel::clearRouteError) {
-                        Icon(Icons.Default.Close, contentDescription = "Fermer", tint = mutedColor)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(Icons.Default.Place, contentDescription = null, tint = accent, modifier = Modifier.size(26.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            LocalizedLabel(poi.name, color = textColor, fontWeight = FontWeight.Bold, maxLines = 1)
+                            LocalizedLabel(poi.category + if (poi.address.isBlank()) "" else " • ${poi.address}", color = mutedColor, fontSize = 11.sp, maxLines = 1)
+                        }
+                        TextButton(
+                            onClick = {
+                                favoritePoiToAdd = poi
+                                showAddFavoriteDialog = true
+                            }
+                        ) {
+                            Icon(Icons.Default.Star, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(4.dp))
+                            LocalizedLabel("Favori")
+                        }
+                        IconButton(onClick = { navViewModel.clearMapPoiSelection() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Fermer")
+                        }
+                        Button(
+                            onClick = {
+                                navViewModel.selectDestination(poi, location)
+                                navViewModel.clearMapPoiSelection()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = accent)
+                        ) {
+                            Icon(Icons.Default.Directions, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            LocalizedLabel("Itinéraire")
+                        }
                     }
                 }
             }
         }
-
         // ── 2. ÉTAT A : MODE RECHERCHE / REPOS (HORS NAVIGATION) ─────────────
         AnimatedVisibility(
             visible = !uiState.isNavigating,
@@ -166,6 +268,7 @@ fun NavigationScreen(
                     shadowElevation = 8.dp,
                     modifier = Modifier
                         .fillMaxWidth(0.5f)
+                        .onGloballyPositioned { searchPanelBounds = it.boundsInRoot() }
                         .border(1.dp, cardBorder, RoundedCornerShape(20.dp))
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
@@ -178,7 +281,7 @@ fun NavigationScreen(
                             OutlinedTextField(
                                 value = uiState.searchQuery,
                                 onValueChange = { navViewModel.updateSearchQuery(it, location) },
-                                placeholder = { Text("Rechercher adresse, McDonald's, station...", color = mutedColor, fontSize = 13.sp) },
+                                placeholder = { LocalizedLabel("Rechercher adresse, McDonald's, station...", color = mutedColor, fontSize = 13.sp) },
                                 singleLine = true,
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = Color.Transparent,
@@ -189,6 +292,7 @@ fun NavigationScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .onFocusChanged { focusState ->
+                                        if (focusState.isFocused) navViewModel.clearMapPoiSelection()
                                         navViewModel.onSearchFocused(focusState.isFocused, location)
                                     }
                             )
@@ -213,18 +317,18 @@ fun NavigationScreen(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { navViewModel.selectDestination(sug, location) }
+                                            .clickable { previewPoi(sug) }
                                             .padding(horizontal = 16.dp, vertical = 10.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                                     ) {
                                         Icon(Icons.Default.Place, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(sug.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                            Text(sug.address, color = mutedColor, fontSize = 11.sp, maxLines = 1)
+                                            LocalizedLabel(sug.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            LocalizedLabel(sug.address, color = mutedColor, fontSize = 11.sp, maxLines = 1)
                                         }
                                         if (sug.distanceKm > 0f) {
-                                            Text("%.1f km".format(sug.distanceKm), color = accent, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                            LocalizedLabel("%.1f km".format(sug.distanceKm), color = accent, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                                         }
                                     }
                                 }
@@ -252,21 +356,21 @@ fun NavigationScreen(
                             // Section 1 : Destinations Récentes (Room DB)
                             if (uiState.recentDestinations.isNotEmpty()) {
                                 item {
-                                    Text("DESTINATIONS RÉCENTES", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    LocalizedLabel("DESTINATIONS RÉCENTES", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 }
                                 items(uiState.recentDestinations) { recent ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { navViewModel.selectDestination(recent, location) }
+                                            .clickable { previewPoi(recent) }
                                             .padding(vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Icon(Icons.Default.History, null, tint = mutedColor, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(recent.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(recent.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            LocalizedLabel(recent.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            LocalizedLabel(recent.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                     }
                                 }
@@ -276,7 +380,7 @@ fun NavigationScreen(
                             // Section 2 : Destinations Enregistrées / Favoris (Room DB)
                             if (uiState.savedPlaces.isNotEmpty()) {
                                 item {
-                                    Text("FAVORIS & ENREGISTRÉS", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    LocalizedLabel("FAVORIS & ENREGISTRÉS", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 }
                                 items(uiState.savedPlaces) { place ->
                                     Row(
@@ -294,8 +398,8 @@ fun NavigationScreen(
                                         }
                                         Icon(ico, null, tint = accent, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(place.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            LocalizedLabel(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            LocalizedLabel(place.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                     }
                                 }
@@ -305,24 +409,24 @@ fun NavigationScreen(
                             // Section 3 : Destinations Proches (POI Mapbox)
                             if (uiState.nearbyPoiSuggestions.isNotEmpty()) {
                                 item {
-                                    Text("DESTINATIONS PROCHES", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    LocalizedLabel("DESTINATIONS PROCHES", color = accent, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                 }
                                 items(uiState.nearbyPoiSuggestions) { poi ->
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { navViewModel.selectDestination(poi, location) }
+                                            .clickable { previewPoi(poi) }
                                             .padding(vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Icon(Icons.Default.Place, null, tint = accent, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(poi.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(poi.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            LocalizedLabel(poi.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            LocalizedLabel(poi.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                         if (poi.distanceKm > 0f) {
-                                            Text("%.1f km".format(poi.distanceKm), color = mutedColor, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                                            LocalizedLabel("%.1f km".format(poi.distanceKm), color = mutedColor, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                                         }
                                     }
                                 }
@@ -361,7 +465,7 @@ fun NavigationScreen(
                                     else    -> Icons.Default.Star
                                 }
                                 Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
-                                Text(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                LocalizedLabel(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
 
                                 IconButton(
                                     onClick = { editingPlace = place },
@@ -387,7 +491,7 @@ fun NavigationScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(Icons.Default.Add, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
-                                Text("Ajouter", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                LocalizedLabel("Ajouter", color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -440,8 +544,14 @@ fun NavigationScreen(
                                 Icon(navIcon, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
                             }
                             Column {
-                                Text(maneuver.instruction, color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                Text("Itinéraire prioritaire le plus rapide • Mapbox Navigation", color = mutedColor, fontSize = 11.sp)
+                                LocalizedLabel(maneuver.instruction, color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                LocalizedLabel(
+                                    if (uiState.isOfflineMode && uiState.routeSteps.isNotEmpty())
+                                        "Étape ${uiState.routeStepIndex + 1}/${uiState.routeSteps.size} • guidage hors ligne"
+                                    else "Itinéraire prioritaire le plus rapide • Mapbox Navigation",
+                                    color = mutedColor,
+                                    fontSize = 11.sp
+                                )
                             }
                         }
                     }
@@ -495,7 +605,7 @@ fun NavigationScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Rechercher sur le trajet", color = textColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        LocalizedLabel("Rechercher sur le trajet", color = textColor, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                         IconButton(onClick = { navViewModel.toggleSplitSearch() }) {
                             Icon(Icons.Default.Close, contentDescription = "Fermer", tint = mutedColor)
                         }
@@ -504,9 +614,11 @@ fun NavigationScreen(
                     OutlinedTextField(
                         value = uiState.splitSearchQuery,
                         onValueChange = { navViewModel.updateSplitSearchQuery(it, location) },
-                        placeholder = { Text("Station-service, péage, parking...") },
+                        placeholder = { LocalizedLabel("Station-service, péage, parking...") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onFocusChanged { if (it.isFocused) navViewModel.clearMapPoiSelection() }
                     )
 
                     HorizontalDivider(color = cardBorder)
@@ -528,10 +640,10 @@ fun NavigationScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        Text(poi.address, color = mutedColor, fontSize = 11.sp, maxLines = 1)
+                                        LocalizedLabel(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        LocalizedLabel(poi.address, color = mutedColor, fontSize = 11.sp, maxLines = 1)
                                     }
-                                    Text("%.1f km".format(poi.distanceKm), color = accent, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                    LocalizedLabel("%.1f km".format(poi.distanceKm), color = accent, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                                 }
                             }
                         }
@@ -542,7 +654,7 @@ fun NavigationScreen(
 
         // ── 5. CARTE ETA & ARRÊT D'URGENCE (BAS D'ÉCRAN) ────────────────────────
         AnimatedVisibility(
-            visible = uiState.isNavigating && uiState.etaInfo != null,
+            visible = uiState.isNavigating && (uiState.etaInfo != null || uiState.isOfflineMode),
             enter = slideInVertically { it } + fadeIn(),
             exit = slideOutVertically { it } + fadeOut(),
             modifier = Modifier
@@ -550,8 +662,7 @@ fun NavigationScreen(
                 .fillMaxWidth(0.6f)
                 .padding(16.dp)
         ) {
-            uiState.etaInfo?.let { eta ->
-                Surface(
+            Surface(
                     shape = RoundedCornerShape(24.dp),
                     color = cardBg.copy(alpha = 0.95f),
                     shadowElevation = 10.dp,
@@ -563,11 +674,20 @@ fun NavigationScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
+                            val eta = uiState.etaInfo
+                            if (eta == null) {
+                                LocalizedLabel("Aucun trajet routier hors ligne pour cette région.", color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                LocalizedLabel("Mettez à jour son téléchargement hors ligne.", color = mutedColor, fontSize = 11.sp)
+                            } else {
                             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text(eta.durationText, color = accent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                                Text("(${eta.distanceText})", color = mutedColor, fontSize = 14.sp, modifier = Modifier.padding(bottom = 3.dp))
+                                LocalizedLabel(eta.durationText, color = accent, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                                LocalizedLabel("(${eta.distanceText})", color = mutedColor, fontSize = 14.sp, modifier = Modifier.padding(bottom = 3.dp))
                             }
-                            Text("Arrivée estimée : ${eta.etaTimeText}", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            LocalizedLabel("Arrivée estimée : ${eta.etaTimeText}", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            if (uiState.isOfflineMode) {
+                                LocalizedLabel("Hors ligne · itinéraire routier téléchargé", color = mutedColor, fontSize = 10.sp)
+                            }
+                            }
                         }
 
                         Button(
@@ -577,19 +697,34 @@ fun NavigationScreen(
                         ) {
                             Icon(Icons.Default.Close, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Arrêter", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            LocalizedLabel("Arrêter", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
-                }
             }
         }
 
         // ── 6. BOÎTE À OUTILS DE LA CAMÉRA (RECENTER GPS) ─────────────────────
-        Box(
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(20.dp)
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            FloatingActionButton(
+                onClick = {
+                    onMapThemeModeChange(if (isMapLightMode) MapThemeMode.DARK else MapThemeMode.LIGHT)
+                },
+                containerColor = cardBg,
+                contentColor = accent,
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    if (isMapLightMode) Icons.Default.DarkMode else Icons.Default.LightMode,
+                    contentDescription = if (isMapLightMode) "Activer le style sombre de la carte" else "Activer le style clair de la carte",
+                    modifier = Modifier.size(24.dp)
+                )
+            }
             FloatingActionButton(
                 onClick = { navViewModel.triggerRecenter() },
                 containerColor = cardBg,
@@ -618,7 +753,7 @@ fun NavigationScreen(
             ) {
                 Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Résultats POI (${uiState.poiResults.size})", color = textColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        LocalizedLabel("Résultats POI (${uiState.poiResults.size})", color = textColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         IconButton(onClick = { navViewModel.dismissBottomSheet() }) {
                             Icon(Icons.Default.Close, contentDescription = null, tint = mutedColor)
                         }
@@ -627,17 +762,17 @@ fun NavigationScreen(
                     LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(uiState.poiResults) { poi ->
                             Surface(
-                                onClick = { navViewModel.selectDestination(poi, location) },
+                                onClick = { previewPoi(poi) },
                                 shape = RoundedCornerShape(12.dp),
                                 color = cardBorder.copy(alpha = 0.15f),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        Text("${poi.category} • ${poi.address}", color = mutedColor, fontSize = 11.sp, maxLines = 1)
+                                        LocalizedLabel(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        LocalizedLabel("${poi.category} • ${poi.address}", color = mutedColor, fontSize = 11.sp, maxLines = 1)
                                     }
-                                    Text("%.1f km".format(poi.distanceKm), color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    LocalizedLabel("%.1f km".format(poi.distanceKm), color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -671,7 +806,7 @@ fun NavigationScreen(
 
         AlertDialog(
             onDismissRequest = { editingPlace = null },
-            title = { Text("Modifier le lieu enregistré", color = textColor) },
+            title = { LocalizedLabel("Modifier le lieu enregistré", color = textColor) },
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -680,7 +815,7 @@ fun NavigationScreen(
                     OutlinedTextField(
                         value = editLabel,
                         onValueChange = { editLabel = it },
-                        label = { Text("Nom du lieu (ex: Domicile, Travail)") },
+                        label = { LocalizedLabel("Nom du lieu (ex: Domicile, Travail)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -691,7 +826,7 @@ fun NavigationScreen(
                             editAddress = it
                             selectedPoint = null
                         },
-                        label = { Text("Adresse avec Autofill Mapbox") },
+                        label = { LocalizedLabel("Adresse avec Autofill Mapbox") },
                         singleLine = true,
                         trailingIcon = {
                             if (isSearchingSuggestions) {
@@ -701,7 +836,7 @@ fun NavigationScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Text("Icône du bouton :", color = mutedColor, fontSize = 12.sp)
+                    LocalizedLabel("Icône du bouton :", color = mutedColor, fontSize = 12.sp)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(availableIcons) { ico ->
                             val isSelected = editIconName == ico
@@ -750,8 +885,8 @@ fun NavigationScreen(
                                     ) {
                                         Icon(Icons.Default.Place, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(sug.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(sug.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            LocalizedLabel(sug.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            LocalizedLabel(sug.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                     }
                                 }
@@ -770,7 +905,7 @@ fun NavigationScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = accent)
                 ) {
-                    Text("Enregistrer")
+                    LocalizedLabel("Enregistrer")
                 }
             },
             dismissButton = {
@@ -779,10 +914,10 @@ fun NavigationScreen(
                         navViewModel.removeSavedPlace(place.id)
                         editingPlace = null
                     }) {
-                        Text("Supprimer", color = MaterialTheme.colorScheme.error)
+                        LocalizedLabel("Supprimer", color = MaterialTheme.colorScheme.error)
                     }
                     TextButton(onClick = { editingPlace = null }) {
-                        Text("Annuler")
+                        LocalizedLabel("Annuler")
                     }
                 }
             }
@@ -791,17 +926,27 @@ fun NavigationScreen(
 
     // Dialogue d'ajout de lieu favori
     if (showAddFavoriteDialog) {
-        var favName by remember { mutableStateOf("") }
-        var favAddress by remember { mutableStateOf("") }
-        var favIconName by remember { mutableStateOf("STAR") }
-        var selectedFavPoint by remember { mutableStateOf<MapboxLocationPoint?>(null) }
+        val selectedPoi = favoritePoiToAdd
+        var favName by remember(selectedPoi) { mutableStateOf(selectedPoi?.name.orEmpty()) }
+        var favAddress by remember(selectedPoi) { mutableStateOf(selectedPoi?.address.orEmpty()) }
+        var favIconName by remember(selectedPoi) {
+            mutableStateOf(
+                when {
+                    selectedPoi?.category?.contains("station", ignoreCase = true) == true -> "GAS"
+                    selectedPoi?.category?.contains("magasin", ignoreCase = true) == true -> "STORE"
+                    selectedPoi?.category?.contains("restaurant", ignoreCase = true) == true -> "HEART"
+                    else -> "STAR"
+                }
+            )
+        }
+        var selectedFavPoint by remember(selectedPoi) { mutableStateOf<MapboxLocationPoint?>(selectedPoi?.point) }
         var favSuggestions by remember { mutableStateOf<List<MapboxPoiResult>>(emptyList()) }
         var isSearchingFavSuggestions by remember { mutableStateOf(false) }
 
         val availableIcons = listOf("HOME", "WORK", "STAR", "CAR", "GAS", "STORE", "HEART", "PIN")
 
         LaunchedEffect(favAddress) {
-            if (favAddress.trim().length >= 2) {
+            if (favAddress.trim().length >= 2 && favAddress != selectedPoi?.address) {
                 delay(300)
                 isSearchingFavSuggestions = true
                 favSuggestions = navViewModel.getAutofillSuggestions(favAddress, location)
@@ -812,8 +957,11 @@ fun NavigationScreen(
         }
 
         AlertDialog(
-            onDismissRequest = { showAddFavoriteDialog = false },
-            title = { Text("Ajouter un Favori", color = textColor) },
+            onDismissRequest = {
+                showAddFavoriteDialog = false
+                favoritePoiToAdd = null
+            },
+            title = { LocalizedLabel("Ajouter un Favori", color = textColor) },
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -822,7 +970,7 @@ fun NavigationScreen(
                     OutlinedTextField(
                         value = favName,
                         onValueChange = { favName = it },
-                        label = { Text("Nom (ex: Salle de sport)") },
+                        label = { LocalizedLabel("Nom (ex: Salle de sport)") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -833,7 +981,7 @@ fun NavigationScreen(
                             favAddress = it
                             selectedFavPoint = null
                         },
-                        label = { Text("Adresse avec Autofill Mapbox") },
+                        label = { LocalizedLabel("Adresse avec Autofill Mapbox") },
                         singleLine = true,
                         trailingIcon = {
                             if (isSearchingFavSuggestions) {
@@ -843,7 +991,7 @@ fun NavigationScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Text("Icône du bouton :", color = mutedColor, fontSize = 12.sp)
+                    LocalizedLabel("Icône du bouton :", color = mutedColor, fontSize = 12.sp)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(availableIcons) { ico ->
                             val isSelected = favIconName == ico
@@ -892,8 +1040,8 @@ fun NavigationScreen(
                                     ) {
                                         Icon(Icons.Default.Place, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            Text(sug.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            Text(sug.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            LocalizedLabel(sug.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            LocalizedLabel(sug.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                     }
                                 }
@@ -905,19 +1053,23 @@ fun NavigationScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (favName.isNotBlank() && favAddress.isNotBlank()) {
+                        if (favName.isNotBlank() && (favAddress.isNotBlank() || selectedFavPoint != null)) {
                             navViewModel.addSavedPlace(favName, favAddress, favIconName, selectedFavPoint)
                             showAddFavoriteDialog = false
+                            favoritePoiToAdd = null
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = accent)
                 ) {
-                    Text("Enregistrer")
+                    LocalizedLabel("Enregistrer")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAddFavoriteDialog = false }) {
-                    Text("Annuler")
+                TextButton(onClick = {
+                    showAddFavoriteDialog = false
+                    favoritePoiToAdd = null
+                }) {
+                    LocalizedLabel("Annuler")
                 }
             }
         )
@@ -934,6 +1086,9 @@ private fun MapboxFullInteractiveMap(
     isSplitSearchOpen: Boolean,
     triggerRecenter: Long,
     accent: Color,
+    savedPlaces: List<SavedPlace>,
+    onMapPoiSelected: (MapboxPoiResult) -> Unit,
+    onMapTapped: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var isFollowingGps by remember { mutableStateOf(true) }
@@ -941,6 +1096,101 @@ private fun MapboxFullInteractiveMap(
     // Managers d'annotations uniques et persistants
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var pointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    var savedPlaceManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    val latestSavedPlaces = rememberUpdatedState(savedPlaces)
+    val latestPoiCallback = rememberUpdatedState(onMapPoiSelected)
+    val latestMapTappedCallback = rememberUpdatedState(onMapTapped)
+
+    val context = LocalContext.current
+    val mapView = remember {
+        // The Maps SDK needs its access token configured before MapView is created.
+        // Reuse the existing Gradle-provided resource; do not duplicate the token.
+        MapboxOptions.accessToken = context.getString(com.openlauncher.app.R.string.mapbox_access_token)
+        MapView(context).apply {
+            gestures.addOnMoveListener(object : OnMoveListener {
+                override fun onMoveBegin(detector: MoveGestureDetector) {
+                    isFollowingGps = false
+                }
+                override fun onMove(detector: MoveGestureDetector): Boolean = false
+                override fun onMoveEnd(detector: MoveGestureDetector) {}
+            })
+            val annotationPlugin = annotations
+            polylineManager = annotationPlugin.createPolylineAnnotationManager()
+            pointManager = annotationPlugin.createPointAnnotationManager()
+            savedPlaceManager = annotationPlugin.createPointAnnotationManager()
+            gestures.addOnMapClickListener { clickedPoint ->
+                latestMapTappedCallback.value()
+                val map = mapboxMap
+                val clickedPixel = map.pixelForCoordinate(clickedPoint)
+                val nearbySaved = latestSavedPlaces.value.firstOrNull { saved ->
+                    val point = saved.point ?: return@firstOrNull false
+                    val pixel = map.pixelForCoordinate(Point.fromLngLat(point.longitude, point.latitude))
+                    kotlin.math.abs(pixel.x - clickedPixel.x) < 44.0 && kotlin.math.abs(pixel.y - clickedPixel.y) < 44.0
+                }
+                if (nearbySaved != null) {
+                    nearbySaved.point?.let { point ->
+                        latestPoiCallback.value(MapboxPoiResult(nearbySaved.id, nearbySaved.label, "Lieu personnalisé", nearbySaved.address, point))
+                    }
+                } else {
+                    map.queryRenderedFeatures(
+                        RenderedQueryGeometry(clickedPixel),
+                        RenderedQueryOptions(listOf("offline-poi-labels"), null)
+                    ) { result ->
+                        val feature = result.value?.firstOrNull()?.queriedFeature?.feature ?: return@queryRenderedFeatures
+                        val point = feature.geometry() as? Point ?: return@queryRenderedFeatures
+                        val name = feature.getStringProperty("name") ?: return@queryRenderedFeatures
+                        val rawCategory = feature.getStringProperty("class") ?: feature.getStringProperty("type") ?: "point_of_interest"
+                        val category = when (rawCategory.lowercase()) {
+                            "food_and_drink", "food_and_drink_stores" -> "Restaurant et alimentation"
+                            "motorist" -> "Station-service"
+                            "store_like" -> "Magasin"
+                            else -> rawCategory.replace("_", " ").replaceFirstChar { it.uppercase() }
+                        }
+                        latestPoiCallback.value(MapboxPoiResult("${name}_${point.longitude()}_${point.latitude()}", name, category, "", MapboxLocationPoint(point.latitude(), point.longitude())))
+                    }
+                }
+                true
+            }
+        }
+    }
+
+    DisposableEffect(mapView) {
+        mapView.onStart()
+        onDispose {
+            mapView.onStop()
+            mapView.onDestroy()
+        }
+    }
+
+    // Mettre à jour le style si le mode jour/nuit change
+    LaunchedEffect(isDayMode) {
+        val mapboxStyle = if (isDayMode) Style.MAPBOX_STREETS else Style.DARK
+        mapView.mapboxMap.loadStyle(mapboxStyle) { style ->
+            // Add explicit labels from Mapbox Streets vector tiles. The offline tile packs
+            // contain these same tiles, so the labels work online and offline.
+            if (style.styleSourceExists("composite") && !style.styleLayerExists("offline-poi-labels")) {
+                style.addLayer(
+                    SymbolLayer("offline-poi-labels", "composite")
+                        .sourceLayer("poi_label")
+                        .minZoom(12.0)
+                        .iconImage(Expression.get("maki"))
+                        .iconSize(0.9)
+                        .iconAllowOverlap(true)
+                        .textField(Expression.get("name"))
+                        .textAnchor(TextAnchor.LEFT)
+                        .textOffset(listOf(1.0, 0.0))
+                        .textSize(11.0)
+                        .textColor(if (isDayMode) "#263238" else "#F5F5F5")
+                        .textHaloColor(if (isDayMode) "#FFFFFF" else "#202124")
+                        .textHaloWidth(1.2)
+                )
+            }
+            mapView.location.updateSettings {
+                enabled = true
+                pulsingEnabled = true
+            }
+        }
+    }
 
     // Lorsque l'utilisateur clique sur le bouton Recenter, on réactive immédiatement le suivi GPS
     LaunchedEffect(triggerRecenter) {
@@ -951,31 +1201,11 @@ private fun MapboxFullInteractiveMap(
 
     AndroidView(
         modifier = modifier,
-        factory = { ctx ->
-            MapView(ctx).apply {
-                val mapboxStyle = if (isDayMode) Style.MAPBOX_STREETS else Style.DARK
-                mapboxMap.loadStyle(mapboxStyle) {
-                    this@apply.location.updateSettings {
-                        enabled = true
-                        pulsingEnabled = true
-                    }
-                }
-                gestures.addOnMoveListener(object : OnMoveListener {
-                    override fun onMoveBegin(detector: MoveGestureDetector) {
-                        isFollowingGps = false
-                    }
-                    override fun onMove(detector: MoveGestureDetector): Boolean = false
-                    override fun onMoveEnd(detector: MoveGestureDetector) {}
-                })
-                val annotationPlugin = annotations
-                polylineManager = annotationPlugin.createPolylineAnnotationManager()
-                pointManager = annotationPlugin.createPointAnnotationManager()
-            }
-        },
-        update = { mapView ->
-            val mapboxMap = mapView.mapboxMap
+        factory = { mapView },
+        update = { mv ->
+            val mapboxMap = mv.mapboxMap
 
-            val leftPadding = if (isSplitSearchOpen) mapView.width / 2.0 else 0.0
+            val leftPadding = if (isSplitSearchOpen) mv.width / 2.0 else 0.0
             val edgeInsets = EdgeInsets(0.0, leftPadding, 0.0, 0.0)
 
             // 1. Suivi GPS en temps réel & Orientation vers le haut (Course-Up avec Pitch 3D)
@@ -1004,6 +1234,23 @@ private fun MapboxFullInteractiveMap(
                 }
             }
 
+            // Render saved custom places with the icon selected by the user and their label.
+            savedPlaceManager?.let { manager ->
+                manager.deleteAll()
+                savedPlaces.forEach { saved ->
+                    saved.point?.let { savedPoint ->
+                        manager.create(
+                            PointAnnotationOptions()
+                                .withPoint(Point.fromLngLat(savedPoint.longitude, savedPoint.latitude))
+                                .withTextField("${savedPlaceMapGlyph(saved.iconName)} ${saved.label}")
+                                .withTextColor(if (isDayMode) "#536B78" else "#F5F5F5")
+                                .withTextHaloColor(if (isDayMode) "#FFFFFF" else "#202124")
+                                .withTextHaloWidth(1.5)
+                                .withTextSize(13.0)
+                        )
+                    }
+                }
+            }
             // 3. Purge et rendu propre du marqueur Destination Pin
             pointManager?.let { ptm ->
                 ptm.deleteAll()
@@ -1019,4 +1266,15 @@ private fun MapboxFullInteractiveMap(
             }
         }
     )
+}
+
+private fun savedPlaceMapGlyph(iconName: String): String = when (iconName.uppercase()) {
+    "HOME" -> "🏠"
+    "WORK" -> "💼"
+    "CAR" -> "🚗"
+    "GAS" -> "⛽"
+    "STORE" -> "🏬"
+    "HEART" -> "♥"
+    "PIN" -> "📍"
+    else -> "★"
 }

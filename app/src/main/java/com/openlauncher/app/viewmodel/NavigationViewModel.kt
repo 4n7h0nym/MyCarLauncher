@@ -3,18 +3,20 @@ package com.openlauncher.app.viewmodel
 import android.app.Application
 import android.location.Geocoder
 import android.location.Location
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mapbox.common.MapboxOptions
 import com.mapbox.common.TileStore
 import com.mapbox.maps.mapsOptions
-import java.io.File
 import com.openlauncher.app.R
+import com.openlauncher.app.data.OfflineRouteEngine
 import com.openlauncher.app.data.room.NavigationRepository
 import com.openlauncher.app.model.*
 import com.openlauncher.app.util.LocationData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +28,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.text.Normalizer
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -38,6 +41,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     private var searchDebounceJob: Job? = null
     private var splitSearchDebounceJob: Job? = null
+    private var routeJob: Job? = null
     private var tileStore: TileStore? = null
 
     init {
@@ -46,32 +50,24 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun setupMapboxOfflineTileStore() {
-        try {
-            val token = getMapboxAccessToken().trim()
-            if (!token.startsWith("pk.") || token.length < 20) {
-                _uiState.update {
-                    it.copy(
-                        hasMapboxToken = false,
-                        offlineCacheStatus = "Jeton public Mapbox manquant ou invalide"
-                    )
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val token = getMapboxAccessToken()
+                if (!token.startsWith("pk.")) {
+                    _uiState.update { it.copy(offlineCacheStatus = "Jeton public Mapbox requis (MAPBOX_ACCESS_TOKEN)") }
+                    return@launch
                 }
-                return
-            }
-            MapboxOptions.accessToken = token
-            tileStore = TileStore.create(File(getApplication<Application>().filesDir, "offline_tiles").absolutePath)
-            MapboxOptions.mapsOptions.tileStore = tileStore
-            _uiState.update {
-                it.copy(
-                    hasMapboxToken = true,
-                    offlineCacheStatus = "Cartes hors-ligne actives; calcul d’itinéraire en ligne"
-                )
-            }
-        } catch (_: Exception) {
-            _uiState.update {
-                it.copy(
-                    hasMapboxToken = false,
-                    offlineCacheStatus = "Impossible d’initialiser Mapbox"
-                )
+                MapboxOptions.accessToken = token
+                // Reuse the same TileStore as the Maps SDK and the region
+                // downloader; a new TileStore.create() would be a separate cache.
+                tileStore = MapboxOptions.mapsOptions.tileStore
+                _uiState.update {
+                    it.copy(offlineCacheStatus = if (tileStore != null) "Cache hors-ligne Mapbox TileStore actif" else "TileStore hors ligne indisponible")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _uiState.update { it.copy(offlineCacheStatus = "Mode hors-ligne disponible via cache local") }
             }
         }
     }
@@ -110,11 +106,16 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             val minDistanceToRoute = computeMinDistanceToRouteMeters(location, currentState.routePoints)
-            if (minDistanceToRoute > 45) {
-                viewModelScope.launch(Dispatchers.IO) {
-                    calculateFastestRoute(destPoint, location)
+            if (minDistanceToRoute > 45 && !currentState.isOfflineMode) {
+                if (routeJob?.isActive != true) {
+                    routeJob = viewModelScope.launch(Dispatchers.IO) {
+                        calculateFastestRoute(destPoint, location)
+                    }
                 }
             } else {
+                if (currentState.isOfflineMode && currentState.routeSteps.isNotEmpty()) {
+                    advanceOfflineManeuver(location, currentState.routeSteps, currentState.routeStepIndex)
+                }
                 updateRemainingEtaAndManeuver(location, currentState.routePoints)
             }
         }
@@ -179,8 +180,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             withContext(Dispatchers.Main) {
                 if (results.isEmpty()) {
                     _uiState.update { it.copy(isSearching = false, isBottomSheetVisible = false) }
-                } else if (results.size == 1 && isExactStreetAddress(query)) {
-                    selectDestination(results[0], currentLocation)
                 } else {
                     _uiState.update {
                         it.copy(
@@ -242,18 +241,25 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
         _uiState.update {
             it.copy(
+                selectedMapPoi = null,
                 selectedDestination = poi,
+                routePoints = emptyList(),
+                etaInfo = null,
+                nextManeuver = null,
+                routeSteps = emptyList(),
+                routeStepIndex = 0,
+                isOfflineMode = false,
                 searchQuery = poi.name,
                 isBottomSheetVisible = false,
                 isSearchFocused = false,
                 isSearching = true,
-                routeError = null,
                 suggestions = emptyList(),
                 isNavigating = true
             )
         }
 
-        viewModelScope.launch(Dispatchers.IO) {
+        routeJob?.cancel()
+        routeJob = viewModelScope.launch(Dispatchers.IO) {
             calculateFastestRoute(poi.point, currentLocation)
         }
     }
@@ -378,6 +384,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun stopNavigation() {
+        routeJob?.cancel()
+        routeJob = null
         _uiState.update {
             it.copy(
                 isNavigating = false,
@@ -386,10 +394,12 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 routePoints = emptyList(),
                 nextManeuver = null,
                 etaInfo = null,
-                routeError = null,
                 selectedDestination = null,
                 searchQuery = "",
                 suggestions = emptyList(),
+                routeSteps = emptyList(),
+                routeStepIndex = 0,
+                isOfflineMode = false,
                 triggerOverview = 0L,
                 triggerRecenter = System.currentTimeMillis()
             )
@@ -403,24 +413,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     // ── CALCUL D'ITINÉRAIRE MAPBOX ──────────────────────────────────────────
 
     private suspend fun calculateFastestRoute(dest: MapboxLocationPoint, currentLocation: LocationData?) {
-        if (currentLocation == null) {
-            withContext(Dispatchers.Main) {
-                _uiState.update {
-                    it.copy(
-                        isNavigating = false,
-                        isSearching = false,
-                        routePoints = emptyList(),
-                        etaInfo = null,
-                        nextManeuver = null,
-                        routeError = "Position GPS indisponible. Activez la localisation pour calculer l’itinéraire."
-                    )
-                }
-            }
-            return
-        }
-
-        val startLat = currentLocation.latitude
-        val startLon = currentLocation.longitude
+        val startLat = currentLocation?.latitude ?: (dest.latitude - 0.02)
+        val startLon = currentLocation?.longitude ?: (dest.longitude - 0.02)
         val destLon = dest.longitude
         val destLat = dest.latitude
 
@@ -431,6 +425,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
             var responseText = ""
             var code = 0
+            var networkUnavailable = false
             try {
                 val conn = URL(mapboxUrl).openConnection() as HttpURLConnection
                 conn.connectTimeout = 4000
@@ -440,11 +435,14 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                     responseText = conn.inputStream.bufferedReader().readText()
                     _uiState.update { it.copy(isOfflineMode = false) }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
+                networkUnavailable = true
                 _uiState.update { it.copy(isOfflineMode = true) }
             }
 
-            if (responseText.isBlank() || code != 200) {
+            if (responseText.isBlank() && !networkUnavailable || responseText.isNotBlank() && code != 200) {
                 val fallbackUrl = "https://router.project-osrm.org/route/v1/driving/$startLon,$startLat;$destLon,$destLat?overview=full&geometries=geojson&steps=true"
                 try {
                     val conn = URL(fallbackUrl).openConnection() as HttpURLConnection
@@ -453,9 +451,71 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                     if (conn.responseCode == 200) {
                         responseText = conn.inputStream.bufferedReader().readText()
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) {}
             }
 
+            if (responseText.isBlank()) {
+                // If online routing is unavailable, ask the Navigation SDK to
+                // build a route from the downloaded routing tiles for this area.
+                // MapboxNavigationProvider is UI-thread owned; requestRoutes is
+                // asynchronous, so it is safe to await from this ViewModel coroutine.
+                val offlineRoute = OfflineRouteEngine.route(
+                    getApplication(),
+                    com.mapbox.geojson.Point.fromLngLat(startLon, startLat),
+                    com.mapbox.geojson.Point.fromLngLat(destLon, destLat)
+                )
+                if (offlineRoute == null) {
+                    withContext(Dispatchers.Main) {
+                        _uiState.update {
+                            it.copy(
+                                routePoints = emptyList(),
+                                etaInfo = null,
+                                nextManeuver = MapboxManeuverInstruction(
+                                    instruction = "Itinéraire hors ligne indisponible. Mettez à jour cette région avec les données routières.",
+                                    iconType = "STRAIGHT",
+                                    distanceMeters = 0.0
+                                ),
+                                routeSteps = emptyList(),
+                                routeStepIndex = 0,
+                                isOfflineMode = true,
+                                isNavigating = true,
+                                isSearching = false
+                            )
+                        }
+                    }
+                    return
+                }
+                val distanceMeters = offlineRoute.distanceMeters.coerceAtLeast(1.0)
+                val durationSeconds = offlineRoute.durationSeconds.coerceAtLeast(60.0)
+                val durationMinutes = (durationSeconds / 60.0).toInt().coerceAtLeast(1)
+                val durationText = if (durationMinutes >= 60) "${durationMinutes / 60}h ${durationMinutes % 60}min" else "$durationMinutes min"
+                val distanceText = if (distanceMeters >= 1000) "%.1f km".format(distanceMeters / 1000.0) else "${distanceMeters.toInt()} m"
+                val arrival = Calendar.getInstance().apply { add(Calendar.SECOND, durationSeconds.toInt()) }
+                val etaTimeText = SimpleDateFormat("HH:mm", Locale.getDefault()).format(arrival.time)
+                val turnSteps = offlineRoute.steps.filterNot { it.iconType.contains("DEPART") }
+                    .ifEmpty { offlineRoute.steps }
+                withContext(Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            routePoints = offlineRoute.points,
+                            etaInfo = MapboxEtaInfo(durationText, etaTimeText, distanceText),
+                            nextManeuver = turnSteps.firstOrNull() ?: MapboxManeuverInstruction(
+                                instruction = "Suivez la route affichée jusqu’à destination",
+                                iconType = "STRAIGHT",
+                                distanceMeters = distanceMeters
+                            ),
+                            routeSteps = turnSteps,
+                            routeStepIndex = 0,
+                            isOfflineMode = true,
+                            isNavigating = true,
+                            isSearching = false
+                        )
+                    }
+                }
+                return
+            }
             if (responseText.isNotBlank()) {
                 val json = JSONObject(responseText)
                 val routes = json.optJSONArray("routes")
@@ -511,8 +571,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                                 etaInfo = eta,
                                 nextManeuver = maneuver,
                                 isNavigating = true,
-                                isSearching = false,
-                                routeError = null
+                                isSearching = false
                             )
                         }
                     }
@@ -520,31 +579,24 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
 
-            withContext(Dispatchers.Main) {
-                _uiState.update {
-                    it.copy(
-                        isSearching = false,
-                        isNavigating = false,
-                        routeError = "Impossible de calculer l’itinéraire. Vérifiez la connexion et le jeton Mapbox."
-                    )
-                }
-            }
+            withContext(Dispatchers.Main) { _uiState.update { it.copy(isSearching = false) } }
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
-            withContext(Dispatchers.Main) {
-                _uiState.update {
-                    it.copy(
-                        isSearching = false,
-                        isNavigating = false,
-                        routeError = "Impossible de calculer l’itinéraire. Vérifiez la connexion et le jeton Mapbox."
-                    )
-                }
-            }
+            withContext(Dispatchers.Main) { _uiState.update { it.copy(isSearching = false) } }
         }
     }
 
     private suspend fun fetchAutofillSuggestions(query: String, loc: LocationData?): List<MapboxPoiResult> {
         val token = getMapboxAccessToken()
         val list = mutableListOf<MapboxPoiResult>()
+
+        // Search Box resolves business names and POI categories to actual nearby venues;
+        // the Geocoding API below remains the fallback for street addresses and places.
+        if (loc != null) {
+            list.addAll(fetchNearbySearchBoxResults(query, loc, 6))
+            if (list.isNotEmpty()) return list
+        }
 
         try {
             val encoded = URLEncoder.encode(query, "UTF-8")
@@ -583,6 +635,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {}
 
         if (list.isEmpty() && loc != null) {
@@ -601,6 +655,9 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         val token = getMapboxAccessToken()
 
         if (loc != null) {
+            list.addAll(fetchNearbySearchBoxResults(query, loc, 15))
+            if (list.isNotEmpty()) return rankResultsByPrefixAndDistance(list, query)
+
             try {
                 val encoded = URLEncoder.encode(query, "UTF-8")
                 val urlStr = "https://api.mapbox.com/geocoding/v5/mapbox.places/$encoded.json?proximity=${loc.longitude},${loc.latitude}&limit=15&access_token=$token"
@@ -646,6 +703,101 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         return rankResultsByPrefixAndDistance(list, query)
     }
 
+    /** Searches actual nearby POIs such as McDonald's, Shell or Petro-Canada. */
+    private fun fetchNearbySearchBoxResults(
+        query: String,
+        loc: LocationData,
+        limit: Int
+    ): List<MapboxPoiResult> {
+        if (query.trim().length < 3) return emptyList()
+        return try {
+            val token = getMapboxAccessToken()
+            val encodedQuery = URLEncoder.encode(query.trim(), "UTF-8")
+            val categoryId = searchBoxCategoryForQuery(query)
+            val endpoint = if (categoryId != null) {
+                "category/$categoryId"
+            } else {
+                "forward?q=$encodedQuery&types=poi"
+            }
+            val paramsSeparator = if (categoryId != null) "?" else "&"
+            val url = URL(
+                "https://api.mapbox.com/search/searchbox/v1/$endpoint" +
+                    "${paramsSeparator}proximity=${loc.longitude},${loc.latitude}&limit=$limit&language=fr&access_token=$token"
+            )
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 4000
+                readTimeout = 5000
+                requestMethod = "GET"
+            }
+            try {
+                val responseCode = connection.responseCode
+                if (responseCode !in 200..299) {
+                    Log.w("NavigationViewModel", "Mapbox Search Box returned HTTP $responseCode")
+                    return emptyList()
+                }
+                val body = connection.inputStream.bufferedReader().use { it.readText() }
+                val features = JSONObject(body).optJSONArray("features") ?: return emptyList()
+                (0 until features.length()).mapNotNull { index ->
+                    val feature = features.optJSONObject(index) ?: return@mapNotNull null
+                    val properties = feature.optJSONObject("properties") ?: JSONObject()
+                    val coordinates = feature.optJSONObject("geometry")?.optJSONArray("coordinates")
+                        ?: feature.optJSONArray("center")
+                        ?: return@mapNotNull null
+                    if (coordinates.length() < 2) return@mapNotNull null
+                    val longitude = coordinates.optDouble(0, Double.NaN)
+                    val latitude = coordinates.optDouble(1, Double.NaN)
+                    if (!longitude.isFinite() || !latitude.isFinite()) return@mapNotNull null
+
+                    val name = properties.optString("name_preferred")
+                        .ifBlank { properties.optString("name") }
+                        .ifBlank { feature.optString("text") }
+                        .ifBlank { query }
+                    val address = properties.optString("full_address")
+                        .ifBlank { properties.optString("place_formatted") }
+                        .ifBlank { properties.optString("address") }
+                    val categories = properties.optJSONArray("poi_category")
+                    val category = categories?.optString(0)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: categoryId?.replace('_', ' ')
+                        ?: "Lieu"
+                    val id = properties.optString("mapbox_id")
+                        .ifBlank { feature.optString("id") }
+                        .ifBlank { "searchbox_${name}_$index" }
+                    MapboxPoiResult(
+                        id = id,
+                        name = name,
+                        category = category.replace('_', ' ').replaceFirstChar { it.uppercase() },
+                        address = address,
+                        point = MapboxLocationPoint(latitude, longitude),
+                        distanceKm = computeDistanceKm(loc.latitude, loc.longitude, latitude, longitude)
+                    )
+                }.sortedBy { it.distanceKm }
+            } finally {
+                connection.disconnect()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /** Exact category phrases use nearby category search; brand/name searches use text search. */
+    private fun searchBoxCategoryForQuery(query: String): String? {
+        val normalized = Normalizer.normalize(query, Normalizer.Form.NFD)
+            .replace("\\p{Mn}+".toRegex(), "")
+            .lowercase(Locale.ROOT)
+            .replace('-', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return when (normalized) {
+            "station service", "stations service", "station essence", "stations essence", "gas station", "gas stations" -> "gas_station"
+            "restaurant", "restaurants", "resto", "restos", "restaurant rapide", "restaurants rapides", "fast food" -> "food_and_drink"
+            "cafe", "cafes", "coffee shop", "coffee shops" -> "coffee"
+            else -> null
+        }
+    }
+
     private fun searchNearbyNominatim(query: String, loc: LocationData, limit: Int): List<MapboxPoiResult> {
         return try {
             val encodedQuery = URLEncoder.encode("$query*", "UTF-8")
@@ -681,6 +833,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }
             list
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Exception) {
             emptyList()
         }
@@ -688,9 +842,24 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     private fun updateRemainingEtaAndManeuver(location: LocationData, routePoints: List<MapboxLocationPoint>) {
         if (routePoints.isEmpty()) return
-        val dest = routePoints.last()
-        val remainingDistKm = computeDistanceKm(location.latitude, location.longitude, dest.latitude, dest.longitude)
-        val remainingDistMeters = (remainingDistKm * 1000).toDouble()
+        var nearestIndex = 0
+        var nearestDistanceMeters = Float.MAX_VALUE
+        val distanceBuffer = FloatArray(1)
+        routePoints.forEachIndexed { index, point ->
+            Location.distanceBetween(location.latitude, location.longitude, point.latitude, point.longitude, distanceBuffer)
+            if (distanceBuffer[0] < nearestDistanceMeters) {
+                nearestDistanceMeters = distanceBuffer[0]
+                nearestIndex = index
+            }
+        }
+        var remainingDistMeters = 0.0
+        for (index in nearestIndex until routePoints.lastIndex) {
+            val from = routePoints[index]
+            val to = routePoints[index + 1]
+            Location.distanceBetween(from.latitude, from.longitude, to.latitude, to.longitude, distanceBuffer)
+            remainingDistMeters += distanceBuffer[0]
+        }
+        val remainingDistKm = remainingDistMeters / 1000.0
 
         val durationHours = remainingDistKm / 50.0
         val durationMin = (durationHours * 60).toInt().coerceAtLeast(1)
@@ -713,6 +882,20 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private fun advanceOfflineManeuver(
+        location: LocationData,
+        steps: List<MapboxManeuverInstruction>,
+        currentIndex: Int
+    ) {
+        val current = steps.getOrNull(currentIndex) ?: return
+        val point = current.maneuverPoint ?: return
+        val distance = computeDistanceKm(location.latitude, location.longitude, point.latitude, point.longitude) * 1000f
+        if (distance <= 25f && currentIndex < steps.lastIndex) {
+            val nextIndex = currentIndex + 1
+            _uiState.update { it.copy(routeStepIndex = nextIndex, nextManeuver = steps[nextIndex]) }
+        }
+    }
+
     private fun computeMinDistanceToRouteMeters(location: LocationData, routePoints: List<MapboxLocationPoint>): Float {
         var minDistance = Float.MAX_VALUE
         val locArr = FloatArray(1)
@@ -729,8 +912,12 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
         _uiState.update { it.copy(isBottomSheetVisible = false) }
     }
 
-    fun clearRouteError() {
-        _uiState.update { it.copy(routeError = null) }
+    fun selectMapPoi(poi: MapboxPoiResult) {
+        _uiState.update { it.copy(selectedMapPoi = poi) }
+    }
+
+    fun clearMapPoiSelection() {
+        _uiState.update { it.copy(selectedMapPoi = null) }
     }
 
     private suspend fun searchLocalDatabaseAndGeocoder(query: String, loc: LocationData?): List<MapboxPoiResult> {
@@ -740,18 +927,14 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
             val currentState = _uiState.value
             val matchesRecents = currentState.recentDestinations.filter { it.name.lowercase().contains(q) || it.address.lowercase().contains(q) }
-            val matchesSaved = currentState.savedPlaces
-                .filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }
-                .mapNotNull { place ->
-                    place.point?.let { point ->
-                        MapboxPoiResult(
-                            id = place.id,
-                            name = place.label,
-                            category = "Favori",
-                            address = place.address,
-                            point = point
-                        )
-                    }
+            val matchesSaved = currentState.savedPlaces.filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }.map {
+                MapboxPoiResult(
+                    id = it.id,
+                    name = it.label,
+                    category = "Favori",
+                    address = it.address,
+                    point = it.point ?: MapboxLocationPoint(48.8566, 2.3522)
+                )
             }
             results.addAll(matchesRecents)
             results.addAll(matchesSaved)
@@ -800,10 +983,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                     }
                 }.thenBy { it.distanceKm }
             )
-    }
-
-    private fun isExactStreetAddress(query: String): Boolean {
-        return query.any { it.isDigit() } && query.length > 8 && (query.contains("rue", ignoreCase = true) || query.contains("ave", ignoreCase = true) || query.contains("bd", ignoreCase = true) || query.contains("st", ignoreCase = true))
     }
 
     private fun buildManeuverText(type: String, modifier: String, distMeters: Double): String {

@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
@@ -261,14 +263,14 @@ private fun BarGauge(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
+            LocalizedLabel(
                 text = label,
                 color = labelColor,
                 fontSize = 8.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 0.5.sp
             )
-            Text(
+            LocalizedLabel(
                 text = displayValue,
                 color = contentColor,
                 fontSize = 11.sp,
@@ -369,7 +371,7 @@ private fun DialGauge(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                Text(
+                LocalizedLabel(
                     text = displayValue,
                     color = contentColor,
                     fontSize = 11.sp,
@@ -377,7 +379,7 @@ private fun DialGauge(
                     textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(1.dp))
-                Text(
+                LocalizedLabel(
                     text = label,
                     color = labelColor,
                     fontSize = 7.sp,

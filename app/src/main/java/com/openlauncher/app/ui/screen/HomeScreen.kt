@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.screen
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import android.annotation.SuppressLint
 import android.content.res.Configuration
 import androidx.compose.animation.*
@@ -29,6 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -42,6 +45,9 @@ import com.openlauncher.app.data.GRID_ROWS
 import com.openlauncher.app.data.WidgetConfig
 import com.openlauncher.app.model.NowPlayingState
 import com.openlauncher.app.model.WeatherState
+import com.openlauncher.app.model.IncomingMessage
+import com.openlauncher.app.model.AppInfo
+import com.openlauncher.app.data.DefaultShortcutIcon
 import com.openlauncher.app.ui.theme.LocalDayMode
 
 import com.openlauncher.app.ui.widget.*
@@ -68,7 +74,10 @@ private val ALL_WIDGET_TYPES = listOf(
     WidgetTypeInfo("SPEEDOMETER",   "SPEED",           Icons.Default.Speed,         "GPS speed"),
     WidgetTypeInfo("VITALS",        "VITALS",          Icons.Default.Dns,           "Head Unit Health / Vitals"),
     WidgetTypeInfo("TRIP_TRACKER",  "TRIP TRACKER",    Icons.Default.Map,           "Trip logs & stats"),
-    WidgetTypeInfo("SOUNDBOARD",    "SOUNDBOARD",      Icons.Default.Piano,         "Custom sound pads")
+    WidgetTypeInfo("SOUNDBOARD",    "SOUNDBOARD",      Icons.Default.Piano,         "Custom sound pads"),
+    WidgetTypeInfo("PHONE_FAVORITES", "PHONE FAVORITES", Icons.Default.Star,        "Bluetooth contacts and quick calls"),
+    WidgetTypeInfo("MESSAGES",       "MESSAGES",        Icons.Default.Message,      "Read and dismiss phone notifications"),
+    WidgetTypeInfo("APP_SHORTCUTS",  "APP SHORTCUTS",   Icons.Default.Apps,         "Launch apps with customizable icons")
 )
 
 private fun canAddWidget(settings: com.openlauncher.app.data.AppSettings): Boolean {
@@ -83,6 +92,9 @@ private fun canAddWidget(settings: com.openlauncher.app.data.AppSettings): Boole
         if (settings.showTripTracker) add("TRIP_TRACKER")
         if (settings.showSoundboard) add("SOUNDBOARD")
         if (settings.showClockWeather) add("CLOCK_WEATHER")
+        if (settings.showPhoneFavorites) add("PHONE_FAVORITES")
+        if (settings.showMessages) add("MESSAGES")
+        if (settings.showAppShortcuts) add("APP_SHORTCUTS")
 
     }
     val activeWidgets = settings.widgetLayout.filter { it.enabled && it.id in visibleIds }
@@ -141,6 +153,16 @@ fun HomeScreen(
     onRadioTune: (band: String, freq: Float) -> Unit = { _, _ -> },
     onAssignRadio: () -> Unit = {},
     onNavigate: (com.openlauncher.app.model.NavDestination) -> Unit = {},
+    incomingMessage: IncomingMessage? = null,
+    onReadMessage: () -> Unit = {},
+    onDismissMessage: () -> Unit = {},
+    apps: List<AppInfo> = emptyList(),
+    favoritePhoneNumbers: List<String> = emptyList(),
+    onCallPhone: (String) -> Unit = {},
+    onTogglePhoneFavorite: (String) -> Unit = {},
+    onAssignAppShortcut: (Int) -> Unit = {},
+    onLaunchAppShortcut: (String) -> Unit = {},
+    onSetAppShortcutIcon: (Int, DefaultShortcutIcon?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val accent       = Color(settings.accentColor)
@@ -180,7 +202,7 @@ fun HomeScreen(
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
+            LocalizedLabel(
                 text          = settings.vehicleName.uppercase(),
                 style         = MaterialTheme.typography.titleLarge,
                 color         = headerTextColor,
@@ -227,6 +249,23 @@ fun HomeScreen(
 
         HorizontalDivider(color = if (isDayMode) Color(0xFFCCCCCC) else Color(0xFF141414))
 
+        incomingMessage?.takeIf { !settings.showMessages }?.let { message ->
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = widgetBg),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        LocalizedLabel("Message de ${message.sender}", color = accent, fontWeight = FontWeight.Bold, maxLines = 1)
+                        LocalizedLabel(message.content, color = MaterialTheme.colorScheme.onSurface, maxLines = 2)
+                    }
+                    IconButton(onClick = onReadMessage) { Icon(Icons.Default.RecordVoiceOver, "Lire le message", tint = accent) }
+                    IconButton(onClick = onDismissMessage) { Icon(Icons.Default.Close, "Masquer", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
+
         // ── Widget Grid ─────────────────────────────────────────────────────
         BoxWithConstraints(
             modifier = Modifier
@@ -254,6 +293,9 @@ fun HomeScreen(
                 if (settings.showTripTracker) add("TRIP_TRACKER")
                 if (settings.showSoundboard) add("SOUNDBOARD")
                 if (settings.showClockWeather) add("CLOCK_WEATHER")
+                if (settings.showPhoneFavorites) add("PHONE_FAVORITES")
+                if (settings.showMessages) add("MESSAGES")
+                if (settings.showAppShortcuts) add("APP_SHORTCUTS")
         
             }
 
@@ -330,6 +372,9 @@ fun HomeScreen(
                     "SPEEDOMETER" -> "SPEED"
                     "TRIP_TRACKER" -> "TRIP"
                     "SOUNDBOARD"  -> "SOUND"
+                    "PHONE_FAVORITES" -> "FAVORITES"
+                    "MESSAGES" -> "MESSAGES"
+                    "APP_SHORTCUTS" -> "APPS"
                     else          -> w.id
                 }
 
@@ -493,6 +538,31 @@ fun HomeScreen(
                             isDayMode = isDayMode,
                             modifier  = Modifier.fillMaxSize()
                         )
+                        "PHONE_FAVORITES" -> PhoneFavoritesWidget(
+                            favoritePhoneNumbers = favoritePhoneNumbers,
+                            onCall = onCallPhone,
+                            onToggleFavorite = onTogglePhoneFavorite,
+                            accent = accent,
+                            isDayMode = isDayMode,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        "MESSAGES" -> MessagesWidget(
+                            message = incomingMessage,
+                            onRead = onReadMessage,
+                            onDismiss = onDismissMessage,
+                            accent = accent,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        "APP_SHORTCUTS" -> AppShortcutsWidget(
+                            shortcuts = settings.shortcuts,
+                            apps = apps,
+                            isEditing = editMode,
+                            accent = accent,
+                            onAssignApp = onAssignAppShortcut,
+                            onLaunchApp = onLaunchAppShortcut,
+                            onSetIcon = onSetAppShortcutIcon,
+                            modifier = Modifier.fillMaxSize()
+                        )
 
                     }
 
@@ -503,7 +573,7 @@ fun HomeScreen(
                         isDayMode -> Color(0xFF999999)
                         else      -> Color(0xFF3A3A3A)
                     }
-                    Text(
+                    LocalizedLabel(
                         text          = label,
                         style         = MaterialTheme.typography.labelSmall,
                         color         = labelColor,
@@ -712,7 +782,7 @@ private fun ContextRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Icon(icon, null, tint = finalTint, modifier = Modifier.size(16.dp))
-        Text(label, color = finalTint, fontSize = 10.sp, letterSpacing = 1.sp)
+        LocalizedLabel(label, color = finalTint, fontSize = 10.sp, letterSpacing = 1.sp)
     }
 }
 
@@ -736,7 +806,7 @@ private fun WidgetResizeDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
+            LocalizedLabel(
                 text          = config.id.replace('_', ' '),
                 color         = dialogText,
                 fontSize      = 11.sp,
@@ -751,12 +821,12 @@ private fun WidgetResizeDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(spanX, spanY) }) {
-                Text("APPLY", color = accent, fontSize = 11.sp, letterSpacing = 1.sp)
+                LocalizedLabel("APPLY", color = accent, fontSize = 11.sp, letterSpacing = 1.sp)
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                Text("CANCEL", color = cancelColor, fontSize = 11.sp, letterSpacing = 1.sp)
+                LocalizedLabel("CANCEL", color = cancelColor, fontSize = 11.sp, letterSpacing = 1.sp)
             }
         },
         containerColor    = dialogBg,
@@ -783,7 +853,7 @@ private fun SpanRow(
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
+        LocalizedLabel(
             text          = label,
             color         = dimColor,
             fontSize      = 10.sp,
@@ -800,7 +870,7 @@ private fun SpanRow(
                 modifier = Modifier.size(16.dp)
             )
         }
-        Text(
+        LocalizedLabel(
             text      = "$value",
             color     = textColor,
             fontSize  = 16.sp,
@@ -860,6 +930,9 @@ private fun WidgetLibraryDialog(
         if (settings.showTripTracker) add("TRIP_TRACKER")
         if (settings.showSoundboard) add("SOUNDBOARD")
         if (settings.showClockWeather) add("CLOCK_WEATHER")
+        if (settings.showPhoneFavorites) add("PHONE_FAVORITES")
+        if (settings.showMessages) add("MESSAGES")
+        if (settings.showAppShortcuts) add("APP_SHORTCUTS")
 
     }
     val canAdd = canAddWidget(settings)
@@ -877,7 +950,7 @@ private fun WidgetLibraryDialog(
                 modifier          = Modifier.fillMaxWidth().padding(bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
+                LocalizedLabel(
                     text          = "WIDGET LIBRARY",
                     color         = titleColor,
                     fontSize      = 9.sp,
@@ -910,7 +983,7 @@ private fun WidgetLibraryDialog(
 
             if (!canAdd) {
                 Spacer(Modifier.height(10.dp))
-                Text(
+                LocalizedLabel(
                     text          = "ALL ${GRID_COLS * GRID_ROWS} CELLS OCCUPIED — REMOVE A WIDGET TO ADD MORE",
                     color         = if (isDayMode) Color(0xFFE03131) else Color(0xFF3A3A3A),
                     fontSize      = 8.sp,
@@ -952,7 +1025,7 @@ private fun WidgetLibraryCard(
     ) {
         Icon(info.icon, null, tint = iconTint, modifier = Modifier.size(18.dp))
         Spacer(Modifier.height(5.dp))
-        Text(
+        LocalizedLabel(
             text          = info.label,
             color         = labelColor,
             fontSize      = 7.sp,
@@ -962,7 +1035,7 @@ private fun WidgetLibraryCard(
             lineHeight    = 9.sp
         )
         Spacer(Modifier.height(3.dp))
-        Text(
+        LocalizedLabel(
             text          = when {
                 isActive -> "ACTIVE"
                 !canAdd  -> "FULL"

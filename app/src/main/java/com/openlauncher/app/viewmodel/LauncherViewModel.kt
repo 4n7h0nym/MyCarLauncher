@@ -2,6 +2,7 @@ package com.openlauncher.app.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.media.AudioManager
 import android.content.Intent
 import android.database.ContentObserver
 import android.net.ConnectivityManager
@@ -12,9 +13,13 @@ import android.os.Looper
 import android.provider.Settings as AndroidSettings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import com.openlauncher.app.data.AppSettings
-import com.openlauncher.app.data.DayNightMode
+import com.openlauncher.app.data.SteeringWheelAction
+import com.openlauncher.app.data.SteeringWheelBinding
 import com.openlauncher.app.data.DefaultShortcutIcon
+import com.openlauncher.app.data.DayNightMode
 import com.openlauncher.app.data.GRID_COLS
 import com.openlauncher.app.data.GRID_ROWS
 import com.openlauncher.app.data.SettingsRepository
@@ -59,8 +64,89 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // ── Navigation ────────────────────────────────────────────────────────────
     private val _nav = MutableStateFlow(NavDestination.HOME)
     val nav: StateFlow<NavDestination> = _nav
+    private val _steeringCaptureAction = MutableStateFlow<SteeringWheelAction?>(null)
+    val steeringCaptureAction: StateFlow<SteeringWheelAction?> = _steeringCaptureAction
 
-    fun navigate(dest: NavDestination) { _nav.value = dest }
+    private val _steeringCaptureIsLongPress = MutableStateFlow(false)
+    val steeringCaptureIsLongPress: StateFlow<Boolean> = _steeringCaptureIsLongPress
+
+    private val _triggerVoiceAssistant = MutableSharedFlow<Unit>()
+    val triggerVoiceAssistant: SharedFlow<Unit> = _triggerVoiceAssistant
+
+    fun navigate(dest: NavDestination) {
+        _nav.value = dest
+        if (settings.value.onboardingCompleted && dest != NavDestination.APP_LIBRARY) {
+            updateSettings { copy(lastDestination = dest.name) }
+        }
+    }
+
+    fun restoreLastDestination(name: String) {
+        _nav.value = runCatching { NavDestination.valueOf(name) }.getOrDefault(NavDestination.HOME)
+    }
+
+    fun requestSteeringKeyCapture(action: SteeringWheelAction?, isLongPress: Boolean = false) {
+        _steeringCaptureAction.value = action
+        _steeringCaptureIsLongPress.value = isLongPress
+    }
+
+    fun handleSteeringKey(keyCode: Int, isLongPress: Boolean = false): Boolean {
+        val captureAction = _steeringCaptureAction.value
+        if (captureAction != null) {
+            val isLong = _steeringCaptureIsLongPress.value
+            updateSettings {
+                val existing = steeringWheelBindings.firstOrNull { it.keyCode == keyCode }
+                val updatedBindings = if (existing != null) {
+                    steeringWheelBindings.map {
+                        if (it.keyCode == keyCode) {
+                            if (isLong) it.copy(longPressAction = captureAction) else it.copy(action = captureAction)
+                        } else {
+                            it
+                        }
+                    }
+                } else {
+                    steeringWheelBindings + SteeringWheelBinding(
+                        keyCode = keyCode,
+                        action = if (!isLong) captureAction else SteeringWheelAction.PLAY_PAUSE,
+                        longPressAction = if (isLong) captureAction else null
+                    )
+                }
+                copy(steeringWheelBindings = updatedBindings)
+            }
+            _steeringCaptureAction.value = null
+            return true
+        }
+
+        val binding = settings.value.steeringWheelBindings.firstOrNull { it.keyCode == keyCode } ?: return false
+        val targetAction = if (isLongPress) binding.longPressAction else binding.action
+        if (targetAction == null) return false
+
+        executeSteeringAction(targetAction)
+        return true
+    }
+
+    private fun executeSteeringAction(action: SteeringWheelAction) {
+        when (action) {
+            SteeringWheelAction.PLAY_PAUSE -> playPause()
+            SteeringWheelAction.NEXT_TRACK -> skipNext()
+            SteeringWheelAction.PREVIOUS_TRACK -> skipPrev()
+            SteeringWheelAction.OPEN_PHONE -> navigate(NavDestination.PHONE)
+            SteeringWheelAction.OPEN_NAVIGATION -> navigate(NavDestination.NAVIGATION)
+            SteeringWheelAction.VOLUME_UP -> {
+                val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                am?.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_RAISE, AudioManager.FLAG_SHOW_UI)
+            }
+            SteeringWheelAction.VOLUME_DOWN -> {
+                val am = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                am?.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_LOWER, AudioManager.FLAG_SHOW_UI)
+            }
+            SteeringWheelAction.VOICE_ASSISTANT -> {
+                viewModelScope.launch { _triggerVoiceAssistant.emit(Unit) }
+            }
+        }
+    }
+
+    fun isSteeringKeyBound(keyCode: Int): Boolean =
+        _steeringCaptureAction.value != null || settings.value.steeringWheelBindings.any { it.keyCode == keyCode }
 
     // ── Shortcut picker ───────────────────────────────────────────────────────
     private val _shortcutPickerSlot = MutableStateFlow<Int?>(null)
@@ -228,6 +314,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 "TRIP_TRACKER"  -> copy(showTripTracker = true)
                 "SOUNDBOARD"    -> copy(showSoundboard = true)
                 "CLOCK_WEATHER" -> copy(showClockWeather = true)
+                "PHONE_FAVORITES" -> copy(showPhoneFavorites = true)
+                "MESSAGES" -> copy(showMessages = true)
+                "APP_SHORTCUTS" -> copy(showAppShortcuts = true)
                 else            -> this
             }
             val idx       = layout.indexOfFirst { it.id == id }
@@ -260,6 +349,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 "TRIP_TRACKER"  -> copy(showTripTracker = false)
                 "SOUNDBOARD"    -> copy(showSoundboard = false)
                 "CLOCK_WEATHER" -> copy(showClockWeather = false)
+                "PHONE_FAVORITES" -> copy(showPhoneFavorites = false)
+                "MESSAGES" -> copy(showMessages = false)
+                "APP_SHORTCUTS" -> copy(showAppShortcuts = false)
                 else            -> this
             }
         }
@@ -322,26 +414,31 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (_appsLoading.value) return
         viewModelScope.launch(Dispatchers.IO) {
             _appsLoading.value = true
-            val pm = getApplication<Application>().packageManager
+            try {
+                val pm = getApplication<Application>().packageManager
 
-            // Use getInstalledApplications — same source Android Settings uses,
-            // catches apps with no launcher/ACTION_MAIN activity (e.g. CarPlay companions)
-            _apps.value = pm.getInstalledApplications(0)
-                .mapNotNull { appInfo ->
-                    try {
-                        val label = pm.getApplicationLabel(appInfo).toString()
-                        if (label.isBlank()) return@mapNotNull null
-                        AppInfo(
-                            packageName = appInfo.packageName,
-                            appName     = label,
-                            icon        = pm.getApplicationIcon(appInfo),
-                            isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
-                        )
-                    } catch (_: Exception) { null }
-                }
-                .distinctBy { it.packageName }
-                .sortedBy { it.appName }
-            _appsLoading.value = false
+                // Use getInstalledApplications — same source Android Settings uses,
+                // catches apps with no launcher/ACTION_MAIN activity (e.g. CarPlay companions)
+                _apps.value = pm.getInstalledApplications(0)
+                    .mapNotNull { appInfo ->
+                        try {
+                            val label = pm.getApplicationLabel(appInfo).toString()
+                            if (label.isBlank()) return@mapNotNull null
+                            AppInfo(
+                                packageName = appInfo.packageName,
+                                appName     = label,
+                                icon        = pm.getApplicationIcon(appInfo),
+                                isSystemApp = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+                            )
+                        } catch (_: Exception) { null }
+                    }
+                    .distinctBy { it.packageName }
+                    .sortedBy { it.appName }
+            } catch (e: Exception) {
+                android.util.Log.e("LauncherViewModel", "Unable to load installed apps", e)
+            } finally {
+                _appsLoading.value = false
+            }
         }
     }
 

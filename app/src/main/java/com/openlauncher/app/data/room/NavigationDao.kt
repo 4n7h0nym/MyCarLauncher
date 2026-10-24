@@ -44,6 +44,9 @@ interface NavigationDao {
     """)
     suspend fun deleteSaved(id: String)
 
+    @Query("DELETE FROM saved_destinations")
+    suspend fun deleteAllSavedDestinations()
+
     @Query("""
         SELECT * FROM offline_regions
         ORDER BY timestamp DESC

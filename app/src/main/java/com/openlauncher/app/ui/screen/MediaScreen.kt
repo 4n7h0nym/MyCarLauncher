@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.screen
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import android.media.MediaMetadata
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -39,17 +41,17 @@ fun MediaScreen(
     val durationMs = state?.controller?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
 
     LaunchedEffect(state?.isPlaying, state?.title) {
+        if (state == null) positionMs = 0L
         while (state?.isPlaying == true) {
             positionMs = state?.controller?.playbackState?.position ?: positionMs
             delay(500)
         }
     }
 
-    val title = state?.title?.takeIf { it.isNotBlank() } ?: "Aucune lecture en cours"
-    val artist = state?.artist?.takeIf { it.isNotBlank() } ?: "Lancez une application musicale"
+    val title = state?.title?.ifEmpty { null } ?: "Aucune lecture en cours"
+    val artist = state?.artist?.ifEmpty { null }.orEmpty()
     val isPlaying = state?.isPlaying == true
     val controller = state?.controller
-    val hasMedia = controller != null
 
     Column(
         modifier = modifier
@@ -67,7 +69,7 @@ fun MediaScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Default.MusicNote, null, tint = accent, modifier = Modifier.size(28.dp))
                 Column {
-                    Text(
+                    LocalizedLabel(
                         text = "BLUETOOTH MEDIA PLAYER (AVRCP)",
                         style = MaterialTheme.typography.titleLarge,
                         color = textColor,
@@ -75,7 +77,7 @@ fun MediaScreen(
                         letterSpacing = 2.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
+                    LocalizedLabel(
                         text = "Synchronized via Android MediaController & A2DP",
                         color = mutedColor,
                         fontSize = 11.sp
@@ -144,7 +146,7 @@ fun MediaScreen(
                     verticalAlignment = Alignment.Top
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(
+                        LocalizedLabel(
                             text = title,
                             color = textColor,
                             fontSize = 28.sp,
@@ -152,7 +154,7 @@ fun MediaScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Text(
+                        LocalizedLabel(
                             text = artist,
                             color = mutedColor,
                             fontSize = 18.sp,
@@ -166,13 +168,13 @@ fun MediaScreen(
                 // Middle Progress Bar & Audio Quality Tag
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Slider(
+                        enabled = state != null,
                         value = positionMs.toFloat(),
                         onValueChange = { newVal ->
                             positionMs = newVal.toLong()
                             controller?.transportControls?.seekTo(newVal.toLong())
                         },
                         valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
-                        enabled = hasMedia && durationMs > 0L,
                         colors = SliderDefaults.colors(
                             thumbColor = accent,
                             activeTrackColor = accent,
@@ -186,15 +188,15 @@ fun MediaScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
+                        LocalizedLabel(
                             text = formatMillis(positionMs),
                             color = mutedColor,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
                         )
 
-                        Text(
-                            text = if (durationMs > 0L) formatMillis(durationMs) else "--:--",
+                        LocalizedLabel(
+                            text = formatMillis(durationMs),
                             color = mutedColor,
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
@@ -210,8 +212,8 @@ fun MediaScreen(
                 ) {
                     // Previous Button
                     Button(
+                        enabled = controller != null,
                         onClick = { controller?.transportControls?.skipToPrevious() },
-                        enabled = hasMedia,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
                         modifier = Modifier
@@ -223,11 +225,11 @@ fun MediaScreen(
 
                     // Play / Pause Button
                     Button(
+                        enabled = controller != null,
                         onClick = {
                             if (isPlaying) controller?.transportControls?.pause()
                             else controller?.transportControls?.play()
                         },
-                        enabled = hasMedia,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent),
                         modifier = Modifier
@@ -244,8 +246,8 @@ fun MediaScreen(
 
                     // Next Button
                     Button(
+                        enabled = controller != null,
                         onClick = { controller?.transportControls?.skipToNext() },
-                        enabled = hasMedia,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
                         modifier = Modifier

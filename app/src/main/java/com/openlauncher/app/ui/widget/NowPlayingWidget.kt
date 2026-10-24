@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import android.media.MediaMetadata
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -164,7 +166,7 @@ fun NowPlayingWidget(
                 modifier = Modifier.background(dropdownBg)
             ) {
                 DropdownMenuItem(
-                    text = { Text("Any Player", color = dropdownText, fontSize = 11.sp) },
+                    text = { LocalizedLabel("Any Player", color = dropdownText, fontSize = 11.sp) },
                     onClick = {
                         selectedSource = "Any Player"
                         menuExpanded = false
@@ -172,7 +174,7 @@ fun NowPlayingWidget(
                     leadingIcon = { Icon(Icons.Default.MusicNote, null, tint = accent, modifier = Modifier.size(14.dp)) }
                 )
                 DropdownMenuItem(
-                    text = { Text("FM/AM Radio", color = dropdownText, fontSize = 11.sp) },
+                    text = { LocalizedLabel("FM/AM Radio", color = dropdownText, fontSize = 11.sp) },
                     onClick = {
                         selectedSource = "FM/AM Radio"
                         menuExpanded = false
@@ -220,14 +222,14 @@ private fun RadioDeck(
         ) {
             Icon(Icons.Default.Radio, null, tint = dimColor, modifier = Modifier.size(22.dp))
             Spacer(Modifier.height(6.dp))
-            Text(
+            LocalizedLabel(
                 "NO RADIO SOURCE",
                 color = contentColor.copy(alpha = 0.85f),
                 fontSize = 9.sp, fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp
             )
             Spacer(Modifier.height(3.dp))
-            Text(
+            LocalizedLabel(
                 "Start your head unit's radio app — or assign it below so Open Launcher can mirror and control it",
                 color = dimColor, fontSize = 7.sp, fontFamily = FontFamily.Monospace,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -244,7 +246,7 @@ private fun RadioDeck(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
+                LocalizedLabel(
                     "ASSIGN RADIO APP",
                     color = accent, fontSize = 7.5.sp, fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold, letterSpacing = 1.sp
@@ -298,7 +300,7 @@ private fun RadioDeck(
                                 .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
+                            LocalizedLabel(
                                 b,
                                 color = if (active) chipActiveText else dimColor,
                                 fontSize = 8.sp, fontFamily = FontFamily.Monospace,
@@ -318,7 +320,7 @@ private fun RadioDeck(
                         .padding(horizontal = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
+                    LocalizedLabel(
                         displayBand,
                         color = chipActiveText,
                         fontSize = 8.sp, fontFamily = FontFamily.Monospace,
@@ -350,13 +352,13 @@ private fun RadioDeck(
         // ── Row 2: live frequency + station/RDS line ──────────────────────────
         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
+                LocalizedLabel(
                     displayFreq,
                     color = if (powerOn) contentColor else contentColor.copy(alpha = 0.3f),
                     fontSize = 34.sp, fontWeight = FontWeight.Light,
                     fontFamily = FontFamily.Monospace, letterSpacing = 0.sp
                 )
-                Text(
+                LocalizedLabel(
                     displayUnit,
                     color = dimColor, fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace,
@@ -364,7 +366,7 @@ private fun RadioDeck(
                 )
             }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
+                LocalizedLabel(
                     text = (if (!powerOn) "RADIO OFF" else hardwareRadio.stationName ?: "LIVE").uppercase(),
                     color = if (powerOn) accent else dimColor.copy(alpha = 0.5f),
                     fontSize = 8.sp, fontFamily = FontFamily.Monospace,
@@ -460,9 +462,9 @@ private fun RadioDeck(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(1.dp)
                         ) {
-                            Text("${pIdx + 1}", color = presetNumColor, fontSize = 7.sp,
+                            LocalizedLabel("${pIdx + 1}", color = presetNumColor, fontSize = 7.sp,
                                 fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                            Text(
+                            LocalizedLabel(
                                 if (isFm) "%.1f".format(presetFreq) else "%.0f".format(presetFreq),
                                 color = presetFreqColor, fontSize = 6.sp,
                                 fontFamily = FontFamily.Monospace
@@ -495,7 +497,7 @@ private fun RadioFlatButton(
             .clickable(enabled = enabled) { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Text(
+        LocalizedLabel(
             label,
             color = when {
                 !enabled -> dimColor.copy(alpha = 0.35f)
@@ -561,7 +563,7 @@ private fun StandardMinimalPlayer(
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(Icons.Default.PhoneAndroid, null, tint = accent.copy(alpha = 0.7f), modifier = Modifier.size(28.dp))
-                                    Text("CARPLAY", color = accent.copy(alpha = 0.6f), fontSize = 8.sp, letterSpacing = 2.sp)
+                                    LocalizedLabel("CARPLAY", color = accent.copy(alpha = 0.6f), fontSize = 8.sp, letterSpacing = 2.sp)
                                 }
                             }
                         }
@@ -584,7 +586,7 @@ private fun StandardMinimalPlayer(
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(Icons.Default.DirectionsCar, null, tint = accent.copy(alpha = 0.7f), modifier = Modifier.size(28.dp))
-                                    Text("ANDROID AUTO", color = accent.copy(alpha = 0.6f), fontSize = 8.sp, letterSpacing = 2.sp)
+                                    LocalizedLabel("ANDROID AUTO", color = accent.copy(alpha = 0.6f), fontSize = 8.sp, letterSpacing = 2.sp)
                                 }
                             }
                         }
@@ -595,7 +597,7 @@ private fun StandardMinimalPlayer(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Icon(Icons.Default.MusicNote, null, tint = idleIconColor, modifier = Modifier.size(24.dp))
-                        Text("NO MEDIA PLAYING", color = idleTextColor, fontSize = 7.sp, letterSpacing = 1.sp)
+                        LocalizedLabel("NO MEDIA PLAYING", color = idleTextColor, fontSize = 7.sp, letterSpacing = 1.sp)
                     }
                 }
             }
@@ -661,7 +663,7 @@ private fun StandardMinimalPlayer(
                         .padding(top = 16.dp)
                         .let { if (!isEditing) it.clickable { onTapToOpenApp() } else it }
                 ) {
-                    Text(
+                    LocalizedLabel(
                         text = nonNullState.title,
                         style = MaterialTheme.typography.titleMedium,
                         color = currentTextColor,
@@ -669,7 +671,7 @@ private fun StandardMinimalPlayer(
                         overflow = TextOverflow.Ellipsis,
                         fontSize = 14.sp
                     )
-                    Text(
+                    LocalizedLabel(
                         text = nonNullState.artist.ifEmpty { "Unknown" },
                         style = MaterialTheme.typography.bodySmall,
                         color = currentSubTextColor,
@@ -692,8 +694,8 @@ private fun StandardMinimalPlayer(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(formatMs(positionMs), style = MaterialTheme.typography.labelSmall, color = currentSubTextColor.copy(alpha = 0.75f), fontSize = 9.sp)
-                            Text(formatMs(durationMs), style = MaterialTheme.typography.labelSmall, color = currentSubTextColor.copy(alpha = 0.75f), fontSize = 9.sp)
+                            LocalizedLabel(formatMs(positionMs), style = MaterialTheme.typography.labelSmall, color = currentSubTextColor.copy(alpha = 0.75f), fontSize = 9.sp)
+                            LocalizedLabel(formatMs(durationMs), style = MaterialTheme.typography.labelSmall, color = currentSubTextColor.copy(alpha = 0.75f), fontSize = 9.sp)
                         }
                     }
 

@@ -1,3 +1,3 @@
 package com.openlauncher.app.model
 
-enum class NavDestination { HOME, RADIO, MEDIA, OFFLINE_MAPS, APP_LIBRARY, NAVIGATION, SETTINGS }
+enum class NavDestination { HOME, PHONE, RADIO, MEDIA, OFFLINE_MAPS, APP_LIBRARY, NAVIGATION, SETTINGS }

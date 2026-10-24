@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
@@ -48,7 +50,7 @@ fun SpeedometerWidget(
                 verticalArrangement = Arrangement.Center,
                 modifier            = Modifier.fillMaxSize()
             ) {
-                Text(
+                LocalizedLabel(
                     text          = "%.0f".format(speedDisplay),
                     color         = contentColor,
                     fontSize      = 54.sp,
@@ -56,7 +58,7 @@ fun SpeedometerWidget(
                     letterSpacing = (-1.5).sp
                 )
                 Spacer(Modifier.height(2.dp))
-                Text(
+                LocalizedLabel(
                     text          = unitLabel,
                     color         = contentColor.copy(alpha = subAlpha * 1.5f),
                     fontSize      = 10.sp,
@@ -118,13 +120,13 @@ fun SpeedometerWidget(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier            = Modifier.offset(y = (-4).dp)
             ) {
-                Text(
+                LocalizedLabel(
                     text          = "%.0f".format(speedDisplay),
                     color         = contentColor,
                     fontSize      = 34.sp,
                     letterSpacing = (-1).sp
                 )
-                Text(
+                LocalizedLabel(
                     text          = unitLabel,
                     color         = contentColor.copy(alpha = subAlpha),
                     fontSize      = 8.sp,

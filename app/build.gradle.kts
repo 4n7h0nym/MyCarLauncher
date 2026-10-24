@@ -15,10 +15,15 @@ android {
         targetSdk = 35
         versionCode = 6
         versionName = "0.0.5"
-        val mapboxPublicToken = providers.gradleProperty("MAPBOX_PUBLIC_TOKEN")
-            .orElse(providers.environmentVariable("MAPBOX_PUBLIC_TOKEN"))
-            .getOrElse("")
-        resValue("string", "mapbox_access_token", mapboxPublicToken)
+        // Mapbox mobile SDKs require a public (pk.*) token. Supply it through
+        // -PMAPBOX_ACCESS_TOKEN=... or the MAPBOX_ACCESS_TOKEN environment variable.
+        resValue(
+            "string",
+            "mapbox_access_token",
+            providers.gradleProperty("MAPBOX_ACCESS_TOKEN")
+                .orElse(providers.environmentVariable("MAPBOX_ACCESS_TOKEN"))
+                .getOrElse("pk.eyJ1IjoibWFwYm94IiwiYSI6ImNpejY4M29iazA2Z2gycXA4N2pmbDZmangifQ.A62N2nA6w2220P9nPxie7g"),
+        )
     }
 
     buildTypes {
@@ -26,7 +31,8 @@ android {
             // Default signing config for normal device testing
         }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -45,6 +51,13 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    // Keep native libraries uncompressed and 16 KB ZIP-aligned in APKs/AABs.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 }
 
@@ -95,12 +108,16 @@ dependencies {
     // Mapbox SDKs (Maps & Search SDK)
     // -------------------------------------------------------------------------
     // 1. Mapbox Maps SDK & Compose Extensions
-    implementation("com.mapbox.maps:android:11.9.0")
-    implementation("com.mapbox.extension:maps-compose:11.9.0")
+    implementation("com.mapbox.maps:android-ndk27:11.14.0")
+    implementation("com.mapbox.extension:maps-compose-ndk27:11.14.0")
 
     // 2. Mapbox Search SDK (Autofill, POI, Category search)
-    implementation("com.mapbox.search:mapbox-search-android-ui:2.8.0")
-    implementation("com.mapbox.search:autofill:2.8.0")
+    implementation("com.mapbox.search:mapbox-search-android-ui-ndk27:2.14.0")
+    implementation("com.mapbox.search:autofill-ndk27:2.14.0")
+
+    // Route generation also works without a network connection when routing
+    // tiles are included in the downloaded TileStore regions.
+    implementation("com.mapbox.navigationcore:navigation-ndk27:3.11.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

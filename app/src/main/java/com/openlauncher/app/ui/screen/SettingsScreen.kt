@@ -27,18 +27,25 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openlauncher.app.data.AppFont
+import com.openlauncher.app.data.AppLanguage
 import com.openlauncher.app.data.AppSettings
 import com.openlauncher.app.data.DayNightMode
 import com.openlauncher.app.data.SidebarPosition
 import com.openlauncher.app.data.ShortcutConfig
 import com.openlauncher.app.data.GradientDirection
 import com.openlauncher.app.data.UnitSystem
+import com.openlauncher.app.data.SteeringWheelAction
+import com.openlauncher.app.viewmodel.LauncherViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.openlauncher.app.ui.theme.LocalDayMode
 import com.openlauncher.app.util.SunriseSunset
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import com.openlauncher.app.ui.components.ColorPickerDialog
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
 import com.openlauncher.app.ui.components.ConfirmDialog
+import kotlin.math.roundToInt
 
 // Resolved at call site via LocalDayMode — see SettingsDivider / SettingsSection
 
@@ -51,6 +58,41 @@ fun SettingsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    fun readSystemBrightness(): Float = runCatching {
+        (Settings.System.getInt(
+            context.contentResolver,
+            Settings.System.SCREEN_BRIGHTNESS,
+            128
+        ) / 255f).coerceIn(0f, 1f)
+    }.getOrDefault(0.5f)
+    var systemBrightness by remember { mutableFloatStateOf(readSystemBrightness()) }
+    var canWriteSystemSettings by remember { mutableStateOf(Settings.System.canWrite(context)) }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val brightnessObserver = object : android.database.ContentObserver(
+            android.os.Handler(android.os.Looper.getMainLooper())
+        ) {
+            override fun onChange(selfChange: Boolean) {
+                systemBrightness = readSystemBrightness()
+            }
+        }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                canWriteSystemSettings = Settings.System.canWrite(context)
+                systemBrightness = readSystemBrightness()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
+            false,
+            brightnessObserver
+        )
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            context.contentResolver.unregisterContentObserver(brightnessObserver)
+        }
+    }
     var showResetDialog       by remember { mutableStateOf(false) }
     var showAccentPicker      by remember { mutableStateOf(false) }
     var showBgPicker          by remember { mutableStateOf(false) }
@@ -75,6 +117,28 @@ fun SettingsScreen(
         }
     }
 
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        uri?.let {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                com.openlauncher.app.util.BackupRestoreManager.exportBackup(context, it, settings)
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri?.let {
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                com.openlauncher.app.util.BackupRestoreManager.importBackup(context, it) { restoredSettings ->
+                    onUpdate { restoredSettings }
+                }
+            }
+        }
+    }
+
     val isDayMode = LocalDayMode.current
     val screenBg  = MaterialTheme.colorScheme.background
 
@@ -91,7 +155,7 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         // ── Title ────────────────────────────────────────────────────────────
-        Text(
+        LocalizedLabel(
             text          = "SETTINGS",
             style         = MaterialTheme.typography.titleLarge,
             color         = if (isDayMode) Color(0xFF111111) else accent,
@@ -100,6 +164,24 @@ fun SettingsScreen(
         )
 
         Spacer(Modifier.height(4.dp))
+
+        SettingsSection("Langue / Language") {
+            LocalizedLabel(
+                if (settings.appLanguage == AppLanguage.FRENCH_CANADA) "Langue du launcher et de l’assistant vocal" else "Launcher and voice assistant language",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 12.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AppLanguage.entries.forEach { language ->
+                    FilterChip(
+                        selected = settings.appLanguage == language,
+                        onClick = { onUpdate { copy(appLanguage = language) } },
+                        label = { LocalizedLabel(language.label) },
+                        leadingIcon = if (settings.appLanguage == language) ({ Icon(Icons.Default.Check, null) }) else null
+                    )
+                }
+            }
+        }
 
         // ── Permissions ──────────────────────────────────────────────────────
         SettingsSection("Permissions") {
@@ -183,7 +265,7 @@ fun SettingsScreen(
             SettingsDivider()
             SettingsButton(
                 label    = "Notification Access",
-                sublabel = if (isMediaConnected) "Granted — media controls active" else "Required for Now Playing widget",
+                sublabel = if (isMediaConnected) "Granted — media and message announcements active" else "Required for media controls and message announcements",
                 icon     = if (isMediaConnected) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff,
                 accent   = if (isMediaConnected) accent else Color(0xFF993333),
                 onClick  = {
@@ -193,6 +275,16 @@ fun SettingsScreen(
                     )
                 }
             )
+            SettingsRow(
+                label = "Read incoming messages aloud",
+                sublabel = "SMS and supported messaging notifications; disabled by default",
+                icon = Icons.Default.RecordVoiceOver
+            ) {
+                Switch(
+                    checked = settings.announceIncomingMessages,
+                    onCheckedChange = { enabled -> onUpdate { copy(announceIncomingMessages = enabled) } }
+                )
+            }
             SettingsDivider()
             SettingsButton(
                 label    = "Draw Over Other Apps",
@@ -238,6 +330,15 @@ fun SettingsScreen(
                     }
                 }
             )
+
+            SettingsDivider()
+            SettingsButton(
+                label = "Relancer le parcours de première ouverture",
+                sublabel = "Revoir les accès et les suggestions de cartes hors ligne",
+                icon = Icons.Default.Replay,
+                accent = accent,
+                onClick = { onUpdate { copy(onboardingCompleted = false) } }
+            )
         }
 
         // ── System Controls ──────────────────────────────────────────────────
@@ -271,8 +372,10 @@ fun SettingsScreen(
             SettingsDivider()
 
             SettingsRow(
-                label    = "Screen Brightness & Display",
-                sublabel = "System display & brightness controls",
+                label    = "System Brightness",
+                sublabel = if (canWriteSystemSettings) {
+                    "${(systemBrightness * 100f).roundToInt()}% • system level"
+                } else "Allow system settings access to adjust brightness",
                 icon     = Icons.Default.Brightness6
             ) {
                 Row(
@@ -280,21 +383,52 @@ fun SettingsScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Slider(
-                        value = settings.wallpaperDim,
-                        onValueChange = { value -> onUpdate { copy(wallpaperDim = value) } },
-                        valueRange = 0f..0.9f,
+                        value = systemBrightness,
+                        onValueChange = { value ->
+                            if (canWriteSystemSettings) {
+                                val brightness = (value * 255f).roundToInt().coerceIn(0, 255)
+                                runCatching {
+                                    Settings.System.putInt(
+                                        context.contentResolver,
+                                        Settings.System.SCREEN_BRIGHTNESS_MODE,
+                                        Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                                    )
+                                    if (Settings.System.putInt(
+                                            context.contentResolver,
+                                            Settings.System.SCREEN_BRIGHTNESS,
+                                            brightness
+                                        )
+                                    ) systemBrightness = brightness / 255f
+                                }
+                            }
+                        },
+                        valueRange = 0f..1f,
+                        enabled = canWriteSystemSettings,
                         colors = sliderColors(accent),
                         modifier = Modifier.width(120.dp)
                     )
                     IconButton(
                         onClick = {
                             runCatching {
-                                context.startActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                val intent = if (canWriteSystemSettings) {
+                                    Intent(Settings.ACTION_DISPLAY_SETTINGS)
+                                } else {
+                                    Intent(
+                                        Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                                        Uri.parse("package:${context.packageName}")
+                                    )
+                                }
+                                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                             }
                         },
                         modifier = Modifier.size(32.dp)
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.OpenInNew, "Display Settings", tint = accent, modifier = Modifier.size(18.dp))
+                        Icon(
+                            if (canWriteSystemSettings) Icons.AutoMirrored.Filled.OpenInNew else Icons.Default.LockOpen,
+                            if (canWriteSystemSettings) "Display Settings" else "Allow system brightness access",
+                            tint = accent,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
             }
@@ -312,7 +446,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value         = nameInput,
                         onValueChange = { nameInput = it },
-                        placeholder   = { Text("MY CAR", color = if (isDayMode) Color(0xFF999999) else Color(0xFF444444), fontSize = 12.sp) },
+                        placeholder   = { LocalizedLabel("MY CAR", color = if (isDayMode) Color(0xFF999999) else Color(0xFF444444), fontSize = 12.sp) },
                         singleLine    = true,
                         textStyle     = LocalTextStyle.current.copy(fontSize = 12.sp, color = if (isDayMode) Color(0xFF111111) else Color.White),
                         colors        = outlinedFieldColors(accent),
@@ -338,7 +472,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value         = homeInput,
                         onValueChange = { homeInput = it },
-                        placeholder   = { Text("123 Main St", color = if (isDayMode) Color(0xFF999999) else Color(0xFF444444), fontSize = 12.sp) },
+                        placeholder   = { LocalizedLabel("123 Main St", color = if (isDayMode) Color(0xFF999999) else Color(0xFF444444), fontSize = 12.sp) },
                         singleLine    = true,
                         textStyle     = LocalTextStyle.current.copy(fontSize = 12.sp, color = if (isDayMode) Color(0xFF111111) else Color.White),
                         colors        = outlinedFieldColors(accent),
@@ -364,7 +498,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value         = workInput,
                         onValueChange = { workInput = it },
-                        placeholder   = { Text("Workplace", color = if (isDayMode) Color(0xFF999999) else Color(0xFF444444), fontSize = 12.sp) },
+                        placeholder   = { LocalizedLabel("Workplace", color = if (isDayMode) Color(0xFF999999) else Color(0xFF444444), fontSize = 12.sp) },
                         singleLine    = true,
                         textStyle     = LocalTextStyle.current.copy(fontSize = 12.sp, color = if (isDayMode) Color(0xFF111111) else Color.White),
                         colors        = outlinedFieldColors(accent),
@@ -395,7 +529,7 @@ fun SettingsScreen(
                             selected = settings.sidebarPosition == pos,
                             onClick  = { onUpdate { copy(sidebarPosition = pos) } },
                             label    = {
-                                Text(
+                                LocalizedLabel(
                                     when (pos) {
                                         SidebarPosition.LEFT   -> "Left"
                                         SidebarPosition.RIGHT  -> "Right"
@@ -436,7 +570,7 @@ fun SettingsScreen(
                     FilterChip(
                         selected = settings.unitSystem == UnitSystem.METRIC,
                         onClick  = { onUpdate { copy(unitSystem = UnitSystem.METRIC) } },
-                        label    = { Text("Metric", fontSize = 11.sp) },
+                        label    = { LocalizedLabel("Metric", fontSize = 11.sp) },
                         colors   = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = accent,
                             selectedLabelColor     = Color.Black
@@ -446,7 +580,7 @@ fun SettingsScreen(
                     FilterChip(
                         selected = settings.unitSystem == UnitSystem.IMPERIAL,
                         onClick  = { onUpdate { copy(unitSystem = UnitSystem.IMPERIAL) } },
-                        label    = { Text("Imperial", fontSize = 11.sp) },
+                        label    = { LocalizedLabel("Imperial", fontSize = 11.sp) },
                         colors   = FilterChipDefaults.filterChipColors(
                             selectedContainerColor = accent,
                             selectedLabelColor     = Color.Black
@@ -519,7 +653,7 @@ fun SettingsScreen(
                             selected = settings.dayNightMode == mode,
                             onClick  = { onUpdate { copy(dayNightMode = mode) } },
                             label    = {
-                                Text(
+                                LocalizedLabel(
                                     text      = when (mode) {
                                         DayNightMode.DARK   -> "Dark"
                                         DayNightMode.LIGHT  -> "Light"
@@ -604,7 +738,7 @@ fun SettingsScreen(
                             contentPadding = PaddingValues(horizontal = 6.dp),
                             modifier = Modifier.height(28.dp)
                         ) {
-                            Text("DEFAULT", color = accent, fontSize = 9.sp, letterSpacing = 1.sp)
+                            LocalizedLabel("DEFAULT", color = accent, fontSize = 9.sp, letterSpacing = 1.sp)
                         }
                     }
                 }
@@ -704,7 +838,7 @@ fun SettingsScreen(
                                 selected = settings.gradientDirection == dir,
                                 onClick  = { onUpdate { copy(gradientDirection = dir) } },
                                 label    = {
-                                    Text(
+                                    LocalizedLabel(
                                         text      = when (dir) {
                                             GradientDirection.TOP_TO_BOTTOM -> "Vertical"
                                             GradientDirection.LEFT_TO_RIGHT -> "Horizontal"
@@ -755,7 +889,7 @@ fun SettingsScreen(
                         onClick  = { onUpdate { copy(wallpaperUri = "") } },
                         modifier = Modifier.align(Alignment.End)
                     ) {
-                        Text("REMOVE WALLPAPER", color = Color(0xFF993333), fontSize = 9.sp, letterSpacing = 1.sp)
+                        LocalizedLabel("REMOVE WALLPAPER", color = Color(0xFF993333), fontSize = 9.sp, letterSpacing = 1.sp)
                     }
                 }
             }
@@ -769,7 +903,7 @@ fun SettingsScreen(
                         FilterChip(
                             selected = settings.appFont == font,
                             onClick  = { onUpdate { copy(appFont = font) } },
-                            label    = { Text(fontDisplayName(font), fontSize = 9.sp, letterSpacing = 0.5.sp) },
+                            label    = { LocalizedLabel(fontDisplayName(font), fontSize = 9.sp, letterSpacing = 0.5.sp) },
                             colors   = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = accent,
                                 selectedLabelColor     = Color.Black
@@ -912,6 +1046,95 @@ fun SettingsScreen(
             }
         }
 
+        // ── Commandes au volant (SWC) ────────────────────────────────────────
+        val launcherVm: LauncherViewModel = viewModel()
+        val captureAction by launcherVm.steeringCaptureAction.collectAsStateWithLifecycle()
+        val captureIsLong by launcherVm.steeringCaptureIsLongPress.collectAsStateWithLifecycle()
+
+        SettingsSection("Commandes au volant (SWC)") {
+            SteeringWheelAction.entries.forEachIndexed { index, action ->
+                if (index > 0) SettingsDivider()
+                val shortBinding = settings.steeringWheelBindings.firstOrNull { it.action == action }
+                val longBinding = settings.steeringWheelBindings.firstOrNull { it.longPressAction == action }
+                val sublabels = mutableListOf<String>()
+                if (shortBinding != null) sublabels.add("Court: Code ${shortBinding.keyCode}")
+                if (longBinding != null) sublabels.add("Long: Code ${longBinding.keyCode}")
+                val keyLabel = if (sublabels.isNotEmpty()) sublabels.joinToString(" • ") else "Non assigné"
+
+                val actionName = when (action) {
+                    SteeringWheelAction.PLAY_PAUSE      -> "Lecture / Pause"
+                    SteeringWheelAction.NEXT_TRACK      -> "Piste suivante"
+                    SteeringWheelAction.PREVIOUS_TRACK  -> "Piste précédente"
+                    SteeringWheelAction.OPEN_PHONE      -> "Ouvrir le téléphone"
+                    SteeringWheelAction.OPEN_NAVIGATION -> "Ouvrir la navigation"
+                    SteeringWheelAction.VOLUME_UP       -> "Augmenter le volume"
+                    SteeringWheelAction.VOLUME_DOWN     -> "Diminuer le volume"
+                    SteeringWheelAction.VOICE_ASSISTANT -> "Assistant Vocal"
+                }
+
+                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    SettingsRow(
+                        label    = actionName,
+                        sublabel = keyLabel,
+                        icon     = Icons.Default.DirectionsCar
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { launcherVm.requestSteeringKeyCapture(action, isLongPress = false) },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Court", fontSize = 11.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { launcherVm.requestSteeringKeyCapture(action, isLongPress = true) },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Long", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (captureAction != null) {
+            AlertDialog(
+                onDismissRequest = { launcherVm.requestSteeringKeyCapture(null) },
+                title = { Text(if (captureIsLong) "Appui long : Appuyez sur un bouton" else "Appui court : Appuyez sur un bouton") },
+                text = { Text("Veuillez presser le bouton physique de votre volant pour l'associer à l'action sélectionnée (${if (captureIsLong) "Appui Long" else "Appui Court"}).") },
+                confirmButton = {
+                    TextButton(onClick = { launcherVm.requestSteeringKeyCapture(null) }) {
+                        Text("Annuler")
+                    }
+                }
+            )
+        }
+
+        // ── Sauvegarde et Restauration ───────────────────────────────────────
+        SettingsSection("Sauvegarde et Restauration") {
+            SettingsButton(
+                label    = "Exporter la sauvegarde",
+                sublabel = "Conserver les réglages, widgets, favoris et cartes dans un fichier JSON",
+                icon     = Icons.Default.Save,
+                accent   = accent,
+                onClick  = {
+                    exportLauncher.launch("openlauncher_backup_${System.currentTimeMillis()}.json")
+                }
+            )
+
+            SettingsDivider()
+
+            SettingsButton(
+                label    = "Restaurer une sauvegarde",
+                sublabel = "Recharger vos réglages et données depuis un fichier JSON",
+                icon     = Icons.Default.Restore,
+                accent   = accent,
+                onClick  = {
+                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                }
+            )
+        }
+
         // ── Updates ──────────────────────────────────────────────────────────
         SettingsSection("Updates") {
             SettingsButton(
@@ -937,14 +1160,14 @@ fun SettingsScreen(
             ) {
                 Icon(Icons.Default.RestartAlt, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Reset to Defaults", color = MaterialTheme.colorScheme.error, fontSize = 13.sp, letterSpacing = 1.sp)
+                LocalizedLabel("Reset to Defaults", color = MaterialTheme.colorScheme.error, fontSize = 13.sp, letterSpacing = 1.sp)
             }
             Spacer(Modifier.height(8.dp))
         }
 
         Spacer(Modifier.height(32.dp))
 
-        Text(
+        LocalizedLabel(
             text          = "v0.0.5  ·  Made by David Lam  ·  2026",
             color         = if (isDayMode) Color(0xFFAAAAAA) else Color(0xFF2A2A2A),
             fontSize      = 10.sp,
@@ -1056,7 +1279,7 @@ private fun SettingsSection(
     val sectionColor  = if (isDayMode) Color(0xFF888888) else Color(0xFF3A3A3A)
     val dividerColor  = if (isDayMode) Color(0xFFCCCCCC) else Color(0xFF1E1E1E)
     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-        Text(
+        LocalizedLabel(
             text          = title.uppercase(),
             style         = MaterialTheme.typography.labelSmall,
             color         = sectionColor,
@@ -1089,9 +1312,9 @@ private fun SettingsRow(
         Icon(icon, null, tint = iconTint, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = labelColor, fontSize = 13.sp)
+            LocalizedLabel(label, style = MaterialTheme.typography.bodyMedium, color = labelColor, fontSize = 13.sp)
             if (sublabel.isNotEmpty())
-                Text(sublabel, style = MaterialTheme.typography.labelSmall, color = subColor, fontSize = 11.sp)
+                LocalizedLabel(sublabel, style = MaterialTheme.typography.labelSmall, color = subColor, fontSize = 11.sp)
         }
         content()
     }
@@ -1120,9 +1343,9 @@ private fun ColumnScope.SettingsButton(
         Icon(icon, null, tint = iconTint, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = labelColor, fontSize = 13.sp)
+            LocalizedLabel(label, style = MaterialTheme.typography.bodyMedium, color = labelColor, fontSize = 13.sp)
             if (sublabel.isNotEmpty())
-                Text(sublabel, style = MaterialTheme.typography.labelSmall, color = subColor, fontSize = 11.sp)
+                LocalizedLabel(sublabel, style = MaterialTheme.typography.labelSmall, color = subColor, fontSize = 11.sp)
         }
         Icon(Icons.Default.ChevronRight, null, tint = chevronC, modifier = Modifier.size(16.dp))
     }

@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.screen
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -55,7 +57,7 @@ fun RadioScreen(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(Icons.Default.Radio, null, tint = accent, modifier = Modifier.size(28.dp))
                 Column {
-                    Text(
+                    LocalizedLabel(
                         text = "VEHICLE RADIO & SATELLITE TUNER",
                         style = MaterialTheme.typography.titleLarge,
                         color = textColor,
@@ -63,7 +65,7 @@ fun RadioScreen(
                         letterSpacing = 2.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Text(
+                    LocalizedLabel(
                         text = "AM/FM, DAB & Satellite Radio receiver",
                         color = mutedColor,
                         fontSize = 11.sp
@@ -90,7 +92,7 @@ fun RadioScreen(
                 ) {
                     Icon(Icons.Default.Radio, null, tint = mutedColor, modifier = Modifier.size(48.dp))
                     Spacer(Modifier.height(16.dp))
-                    Text(
+                    LocalizedLabel(
                         "NO RADIO SOURCE CONNECTED",
                         color = textColor,
                         fontSize = 14.sp,
@@ -98,7 +100,7 @@ fun RadioScreen(
                         letterSpacing = 1.5.sp
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text(
+                    LocalizedLabel(
                         "Start your head unit's radio app or assign it below to enable steering wheel & direct mirror controls.",
                         color = mutedColor,
                         fontSize = 12.sp,
@@ -113,7 +115,7 @@ fun RadioScreen(
                     ) {
                         Icon(Icons.Default.Settings, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("ASSIGN RADIO APP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        LocalizedLabel("ASSIGN RADIO APP", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -158,7 +160,7 @@ fun RadioScreen(
                                     modifier = Modifier.height(36.dp)
                                 ) {
                                     Box(modifier = Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                                        Text(
+                                        LocalizedLabel(
                                             b,
                                             color = if (active) Color.Black else textColor,
                                             fontSize = 12.sp,
@@ -176,7 +178,7 @@ fun RadioScreen(
                             modifier = Modifier.height(36.dp)
                         ) {
                             Box(modifier = Modifier.padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
-                                Text(
+                                LocalizedLabel(
                                     displayBand,
                                     color = Color.Black,
                                     fontSize = 12.sp,
@@ -212,7 +214,7 @@ fun RadioScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp)
                 ) {
-                    Text(
+                    LocalizedLabel(
                         text = if (!powerOn) "RADIO OFF" else hardwareRadio.stationName ?: "LIVE RECEPTION",
                         color = if (powerOn) accent else mutedColor,
                         fontSize = 14.sp,
@@ -224,7 +226,7 @@ fun RadioScreen(
                         verticalAlignment = Alignment.Bottom,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Text(
+                        LocalizedLabel(
                             text = if (powerOn) displayFreq else "— —",
                             color = textColor,
                             fontSize = 72.sp,
@@ -233,7 +235,7 @@ fun RadioScreen(
                             letterSpacing = (-2).sp
                         )
                         Spacer(Modifier.width(12.dp))
-                        Text(
+                        LocalizedLabel(
                             text = hardwareRadio.displayUnit,
                             color = mutedColor,
                             fontSize = 20.sp,
@@ -263,7 +265,7 @@ fun RadioScreen(
                         ) {
                             Icon(Icons.Default.SkipPrevious, null, tint = textColor, modifier = Modifier.size(24.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("SEEK DOWN", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            LocalizedLabel("SEEK DOWN", color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.width(24.dp))
                         Button(
@@ -273,7 +275,7 @@ fun RadioScreen(
                             colors = ButtonDefaults.buttonColors(containerColor = accent),
                             modifier = Modifier.height(50.dp).width(160.dp)
                         ) {
-                            Text("SEEK UP", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            LocalizedLabel("SEEK UP", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(8.dp))
                             Icon(Icons.Default.SkipNext, null, tint = Color.Black, modifier = Modifier.size(24.dp))
                         }
@@ -299,7 +301,7 @@ fun RadioScreen(
                                     modifier = Modifier.weight(1f).height(44.dp)
                                 ) {
                                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        Text(
+                                        LocalizedLabel(
                                             text = if (displayBand == "AM" || displayBand in listOf("SAT", "SXM")) "%.0f".format(pf) else "%.1f".format(pf),
                                             color = if (powerOn) textColor else mutedColor,
                                             fontSize = 12.sp,

@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -68,9 +70,12 @@ fun TripTrackerWidget(
     var accelTimeDisplay by remember { mutableStateOf("0.00s") }
     var bestAccelTime by rememberSaveable { mutableStateOf<Float?>(null) }
     
+    var simSpeed by remember { mutableFloatStateOf(0f) }
+    var isSimulating by remember { mutableStateOf(false) }
+
     val currentSpeedMps = location?.speedMps ?: 0f
-    val speedDisplay = if (isMetric) currentSpeedMps * 3.6f else currentSpeedMps * 2.23694f
-    val targetSpeed = if (isMetric) 100f else 62.1371f
+    val speedDisplay = if (isSimulating) simSpeed else (if (isMetric) currentSpeedMps * 3.6f else currentSpeedMps * 2.23694f)
+    val targetSpeed = if (isMetric) 100f else 60f
     val targetSpeedUnit = if (isMetric) "KM/H" else "MPH"
 
     // High precision stopwatch update loop
@@ -90,7 +95,7 @@ fun TripTrackerWidget(
 
     // GPS real-time speed run tracking
     LaunchedEffect(location, activeMode) {
-        if (activeMode == "0-100") {
+        if (activeMode == "0-100" && !isSimulating) {
             val speed = location?.speedMps ?: 0f
             val speedDisplayVal = if (isMetric) speed * 3.6f else speed * 2.23694f
             
@@ -107,6 +112,31 @@ fun TripTrackerWidget(
                     bestAccelTime = if (bestAccelTime == null) finalTime else minOf(bestAccelTime!!, finalTime)
                 }
             }
+        }
+    }
+
+    // Playful local test simulation loop (triggers when tapping speed layout while READY)
+    LaunchedEffect(isSimulating) {
+        if (isSimulating) {
+            accelStartTime = android.os.SystemClock.elapsedRealtime()
+            accelState = "RUNNING"
+            val simTarget = if (isMetric) 100f else 60f
+            simSpeed = 0f
+            while (simSpeed < simTarget + 5f && isSimulating && accelState == "RUNNING") {
+                delay(30)
+                val elapsed = (android.os.SystemClock.elapsedRealtime() - accelStartTime) / 1000f
+                simSpeed = elapsed * elapsed * 2.8f + elapsed * 8f
+                if (simSpeed >= simTarget) {
+                    accelEndTime = android.os.SystemClock.elapsedRealtime()
+                    accelState = "COMPLETE"
+                    val finalTime = (accelEndTime - accelStartTime) / 1000f
+                    bestAccelTime = if (bestAccelTime == null) finalTime else minOf(bestAccelTime!!, finalTime)
+                    break
+                }
+            }
+            isSimulating = false
+        } else {
+            simSpeed = 0f
         }
     }
 
@@ -188,7 +218,7 @@ fun TripTrackerWidget(
                     modifier = Modifier.weight(0.38f),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
+                    LocalizedLabel(
                         text = "DISTANCE // DIST",
                         color = labelColor,
                         fontSize = 6.5.sp,
@@ -201,14 +231,14 @@ fun TripTrackerWidget(
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Box(contentAlignment = Alignment.BottomStart) {
-                            Text(
+                            LocalizedLabel(
                                 text = "88.88",
                                 color = dimDisplayColor,
                                 fontSize = 24.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(
+                            LocalizedLabel(
                                 text = "%05.2f".format(distanceDisplay),
                                 color = displayColor,
                                 fontSize = 24.sp,
@@ -216,7 +246,7 @@ fun TripTrackerWidget(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Text(
+                        LocalizedLabel(
                             text = distUnit,
                             color = displayColor,
                             fontSize = 9.sp,
@@ -228,14 +258,14 @@ fun TripTrackerWidget(
                     
                     // Hired/Time-Off Indicators
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
+                        LocalizedLabel(
                             text = "[RUNNING]",
                             color = if (isRunning) activeAccent else dimDisplayColor,
                             fontSize = 6.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
-                        Text(
+                        LocalizedLabel(
                             text = "[STOPPED]",
                             color = if (!isRunning && (driveTimeSeconds > 0 || idleTimeSeconds > 0)) teRed else dimDisplayColor,
                             fontSize = 6.sp,
@@ -254,17 +284,17 @@ fun TripTrackerWidget(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("DRIVE [TIME]", color = labelColor, fontSize = 6.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        LocalizedLabel("DRIVE [TIME]", color = labelColor, fontSize = 6.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                         Box {
-                            Text("88:88:88", color = dimDisplayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
-                            Text(formatTime(driveTimeSeconds), color = displayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                            LocalizedLabel("88:88:88", color = dimDisplayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                            LocalizedLabel(formatTime(driveTimeSeconds), color = displayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                         }
                     }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("IDLE [TIME]", color = labelColor, fontSize = 6.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        LocalizedLabel("IDLE [TIME]", color = labelColor, fontSize = 6.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                         Box {
-                            Text("88:88:88", color = dimDisplayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
-                            Text(formatTime(idleTimeSeconds), color = displayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                            LocalizedLabel("88:88:88", color = dimDisplayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                            LocalizedLabel(formatTime(idleTimeSeconds), color = displayColor, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
                         }
                     }
                 }
@@ -276,7 +306,7 @@ fun TripTrackerWidget(
                     horizontalAlignment = Alignment.End
                 ) {
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(
+                        LocalizedLabel(
                             text = "AVG SPEED // SPD",
                             color = labelColor,
                             fontSize = 6.5.sp,
@@ -289,14 +319,14 @@ fun TripTrackerWidget(
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Box(contentAlignment = Alignment.BottomEnd) {
-                                Text(
+                                LocalizedLabel(
                                     text = "888.8",
                                     color = dimDisplayColor,
                                     fontSize = 15.sp,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Text(
+                                LocalizedLabel(
                                     text = "%05.1f".format(avgSpeedDisplay),
                                     color = displayColor,
                                     fontSize = 15.sp,
@@ -304,7 +334,7 @@ fun TripTrackerWidget(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            Text(
+                            LocalizedLabel(
                                 text = speedUnit,
                                 color = displayColor,
                                 fontSize = 7.sp,
@@ -319,8 +349,8 @@ fun TripTrackerWidget(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text("SYS STAT", color = labelColor, fontSize = 6.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                        Text(
+                        LocalizedLabel("SYS STAT", color = labelColor, fontSize = 6.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                        LocalizedLabel(
                             text = if (isRunning) "A" else "I",
                             color = if (isRunning) activeAccent else displayColor,
                             fontSize = 10.sp,
@@ -335,7 +365,7 @@ fun TripTrackerWidget(
                     modifier = Modifier.weight(0.48f),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
+                    LocalizedLabel(
                         text = if (isMetric) "ACCEL TEST // 0-100" else "ACCEL TEST // 0-60",
                         color = labelColor,
                         fontSize = 6.5.sp,
@@ -349,14 +379,14 @@ fun TripTrackerWidget(
                         horizontalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
                         Box(contentAlignment = Alignment.BottomStart) {
-                            Text(
+                            LocalizedLabel(
                                 text = "88.88",
                                 color = dimDisplayColor,
                                 fontSize = 24.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
                             )
-                            Text(
+                            LocalizedLabel(
                                 text = accelTimeDisplay.removeSuffix("s"),
                                 color = displayColor,
                                 fontSize = 24.sp,
@@ -364,7 +394,7 @@ fun TripTrackerWidget(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                        Text(
+                        LocalizedLabel(
                             text = "SEC",
                             color = displayColor,
                             fontSize = 9.sp,
@@ -376,21 +406,21 @@ fun TripTrackerWidget(
                     
                     // Acceleration Status indicators
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
+                        LocalizedLabel(
                             text = "[READY]",
                             color = if (accelState == "READY") activeAccent else dimDisplayColor,
                             fontSize = 6.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
-                        Text(
+                        LocalizedLabel(
                             text = "[RUNNING]",
-                            color = if (accelState == "RUNNING") Color(0xFFE6A23C) else dimDisplayColor,
+                            color = if (accelState == "RUNNING" || isSimulating) Color(0xFFE6A23C) else dimDisplayColor,
                             fontSize = 6.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
-                        Text(
+                        LocalizedLabel(
                             text = "[COMPLETE]",
                             color = if (accelState == "COMPLETE") teRed else dimDisplayColor,
                             fontSize = 6.sp,
@@ -402,12 +432,15 @@ fun TripTrackerWidget(
 
                 Column(
                     modifier = Modifier
-                        .weight(0.52f),
+                        .weight(0.52f)
+                        .clickable(enabled = accelState == "READY") {
+                            isSimulating = true
+                        },
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.End
                 ) {
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(
+                        LocalizedLabel(
                             text = "SPEED // TARGET %d".format(targetSpeed.toInt()),
                             color = labelColor,
                             fontSize = 6.5.sp,
@@ -420,14 +453,14 @@ fun TripTrackerWidget(
                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Box(contentAlignment = Alignment.BottomEnd) {
-                                Text(
+                                LocalizedLabel(
                                     text = "888.8",
                                     color = dimDisplayColor,
                                     fontSize = 15.sp,
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Text(
+                                LocalizedLabel(
                                     text = "%05.1f".format(speedDisplay),
                                     color = displayColor,
                                     fontSize = 15.sp,
@@ -435,7 +468,7 @@ fun TripTrackerWidget(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            Text(
+                            LocalizedLabel(
                                 text = targetSpeedUnit,
                                 color = displayColor,
                                 fontSize = 7.sp,
@@ -447,14 +480,14 @@ fun TripTrackerWidget(
                     }
                     
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = if (accelState == "READY") "GPS TEST READY" else "BEST RECORD",
-                            color = if (accelState == "READY") activeAccent.copy(alpha = 0.7f) else labelColor,
+                        LocalizedLabel(
+                            text = if (accelState == "READY" && !isSimulating) "TAP SPEED TO TEST" else "BEST RECORD",
+                            color = if (accelState == "READY" && !isSimulating) activeAccent.copy(alpha = 0.7f) else labelColor,
                             fontSize = 5.5.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
+                        LocalizedLabel(
                             text = if (bestAccelTime != null) "%.2fs".format(bestAccelTime) else "--.--s",
                             color = if (bestAccelTime != null) activeAccent else displayColor,
                             fontSize = 9.sp,
@@ -475,13 +508,14 @@ fun TripTrackerWidget(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Button 1: OPR / RUN styled as a flat dynamic circular cap
-            val oprActive = if (activeMode == "0-100") accelState == "RUNNING" else isRunning
+            val oprActive = if (activeMode == "0-100") (accelState == "RUNNING" || isSimulating) else isRunning
             TeTactileButton(
                 label = "OPR",
                 keyColor = activeAccent,
                 active = oprActive,
                 onClick = {
                     if (activeMode == "0-100") {
+                        isSimulating = false
                         accelState = "READY"
                         accelStartTime = 0L
                         accelEndTime = 0L
@@ -505,6 +539,7 @@ fun TripTrackerWidget(
                 enabled = canReset,
                 onClick = {
                     if (activeMode == "0-100") {
+                        isSimulating = false
                         accelState = "READY"
                         accelStartTime = 0L
                         accelEndTime = 0L
@@ -576,7 +611,7 @@ private fun TeTactileButton(
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         // Monospace printed label above key
-        Text(
+        LocalizedLabel(
             text = label,
             color = printedLabelColor,
             fontSize = 7.sp,

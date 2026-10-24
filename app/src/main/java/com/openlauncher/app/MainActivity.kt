@@ -1,7 +1,11 @@
 package com.openlauncher.app
 
 import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,6 +13,8 @@ import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -21,20 +27,60 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.mapbox.common.MapboxOptions
+import com.openlauncher.app.data.OfflineRegionManager
+import com.openlauncher.app.data.BluetoothContactsRepository
 import com.openlauncher.app.data.DayNightMode
 import com.openlauncher.app.data.SidebarPosition
 import com.openlauncher.app.data.GradientDirection
+import com.openlauncher.app.data.AppLanguage
 import com.openlauncher.app.model.NavDestination
+import com.openlauncher.app.model.IncomingMessage
+import com.openlauncher.app.service.MediaListenerService
+import com.openlauncher.app.ui.components.VoiceAssistantDialog
+import com.openlauncher.app.ui.components.LocalAppLanguage
+import com.openlauncher.app.util.TextToSpeechManager
 import com.openlauncher.app.ui.components.Sidebar
 import com.openlauncher.app.ui.screen.*
 import com.openlauncher.app.ui.theme.OpenLauncherTheme
 import com.openlauncher.app.viewmodel.LauncherViewModel
 import com.openlauncher.app.viewmodel.NavigationViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.Normalizer
 
 class MainActivity : ComponentActivity() {
 
     private val vm: LauncherViewModel by viewModels()
     private val navVm: NavigationViewModel by viewModels()
+    private lateinit var speech: TextToSpeechManager
+
+    private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val number = pendingCallNumber
+        pendingCallNumber = null
+        if (granted && number != null) dial(number) else speech.speak(if (currentVoiceLanguage().startsWith("en")) "Call permission is required to call this contact." else "L’autorisation d’appel est nécessaire pour appeler ce contact.")
+    }
+    private var pendingCallNumber: String? = null
+    private fun currentVoiceLanguage(): String = vm.settings.value.appLanguage.tag
+
+    private fun placeCall(number: String) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+            pendingCallNumber = number
+            callPermission.launch(Manifest.permission.CALL_PHONE)
+        } else dial(number)
+    }
+
+    private fun dial(number: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null)))
+        }.onFailure {
+            startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)))
+        }
+    }
+
+    private fun normalizeVoiceText(value: String): String = Normalizer.normalize(value.lowercase(), Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "").replace(Regex("[^a-z0-9+ ]"), " ").replace(Regex("\\s+"), " ").trim()
 
     private val locationPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -60,7 +106,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        speech = TextToSpeechManager(this)
         hideSystemBars()
+        // Configure the existing Gradle-provided token before any offline Mapbox
+        // manager or TileStore is initialized.
+        MapboxOptions.accessToken = getString(R.string.mapbox_access_token)
+        OfflineRegionManager.ensureStylePackDownloaded(this)
 
         setContent {
             val settingsLoaded by vm.settingsLoaded.collectAsStateWithLifecycle()
@@ -69,6 +120,7 @@ class MainActivity : ComponentActivity() {
             val apps        by vm.apps.collectAsStateWithLifecycle()
             val appsLoading by vm.appsLoading.collectAsStateWithLifecycle()
             val nowPlaying  by vm.nowPlaying.collectAsStateWithLifecycle()
+            val navigationState by navVm.uiState.collectAsStateWithLifecycle()
             val weather     by vm.weather.collectAsStateWithLifecycle()
             val location    by vm.location.collectAsStateWithLifecycle()
             val bearing     by vm.compassBearing.collectAsStateWithLifecycle()
@@ -80,6 +132,19 @@ class MainActivity : ComponentActivity() {
             val isDayMode = if (settings.dayNightMode == DayNightMode.SYSTEM) !systemIsDark else isDayModeVM
             val pickerSlot      by vm.shortcutPickerSlot.collectAsStateWithLifecycle()
             val appPickerTarget by vm.appPickerTarget.collectAsStateWithLifecycle()
+            val incomingMessage by MediaListenerService.incomingMessage.collectAsStateWithLifecycle()
+            var voiceAssistantOpen by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                vm.triggerVoiceAssistant.collect {
+                    voiceAssistantOpen = true
+                }
+            }
+            SideEffect {
+                MediaListenerService.announceIncomingMessages = settings.announceIncomingMessages
+                MediaListenerService.voiceLanguageTag = settings.appLanguage.tag
+                speech.setLanguage(settings.appLanguage.tag)
+                java.util.Locale.setDefault(java.util.Locale.forLanguageTag(settings.appLanguage.tag))
+            }
 
             val accent         = Color(settings.accentColor)
             val bg             = if (settings.useCustomBackgroundColor) {
@@ -121,9 +186,14 @@ class MainActivity : ComponentActivity() {
                     isDayMode      = isDayMode,
                     useCustomBg    = settings.useCustomBackgroundColor
                 ) {
+                CompositionLocalProvider(LocalAppLanguage provides settings.appLanguage) {
                 if (!settings.onboardingCompleted) {
                     OnboardingScreen(
                         accent = accent,
+                        location = location,
+                        language = settings.appLanguage,
+                        onLanguageChange = { language -> vm.updateSettings { copy(appLanguage = language) } },
+                        onLocationPermissionGranted = { vm.startLocationUpdates() },
                         onComplete = {
                             vm.updateSettings { copy(onboardingCompleted = true) }
                             // Start location updates immediately upon completion
@@ -159,25 +229,18 @@ class MainActivity : ComponentActivity() {
                                     currentDest   = nav,
                                     settings      = settings,
                                     isHorizontal  = isBottomBar,
-                                    installedIconFor = { pkg ->
-                                        apps.find { it.packageName == pkg }?.icon
-                                    },
                                     onNavigate    = { dest ->
                                         vm.cancelShortcutPicker()
                                         vm.cancelCarPlayPicker()
                                         vm.exitRearrangeMode()
                                         vm.navigate(dest)
                                     },
-                                    onShortcutClick = { slot ->
-                                        val shortcut = settings.shortcuts[slot]
-                                        if (shortcut.packageName.isNotEmpty()) {
-                                            vm.launchApp(shortcut.packageName)
-                                        }
-                                    },
-                                    onShortcutLongPress  = { slot -> vm.startShortcutPicker(slot) },
-                                    onShortcutRemove     = { slot -> vm.removeShortcut(slot) },
-                                    onShortcutSetIcon    = { slot, icon -> vm.setShortcutIcon(slot, icon) },
-                                    onReorder            = { from, to -> vm.reorderShortcut(from, to) }
+                                    onVoiceAssistant = { voiceAssistantOpen = true },
+                                    nowPlaying = nowPlaying,
+                                    isRouteActive = navigationState.isNavigating,
+                                    nextManeuver = navigationState.nextManeuver,
+                                    onPlayPause = vm::playPause,
+                                    onSkipNext = vm::skipNext
                                 )
                             }
                         }
@@ -236,7 +299,22 @@ class MainActivity : ComponentActivity() {
                                         onRadioSwitchAm       = { vm.radioSwitchAm() },
                                         onRadioTune           = { band, freq -> vm.radioTune(band, freq) },
                                         onAssignRadio         = { vm.startRadioPicker() },
-                                        onNavigate            = { dest -> vm.navigate(dest) }
+                                        onNavigate            = { dest -> vm.navigate(dest) },
+                                        incomingMessage = incomingMessage,
+                                        onReadMessage = { MediaListenerService.readIncomingMessage() },
+                                        onDismissMessage = { MediaListenerService.dismissIncomingMessage() },
+                                        apps = apps,
+                                        favoritePhoneNumbers = settings.favoritePhoneNumbers,
+                                        onCallPhone = ::placeCall,
+                                        onTogglePhoneFavorite = { key ->
+                                            vm.updateSettings {
+                                                val favorites = favoritePhoneNumbers
+                                                copy(favoritePhoneNumbers = if (key in favorites) favorites - key else favorites + key)
+                                            }
+                                        },
+                                        onAssignAppShortcut = vm::startShortcutPicker,
+                                        onLaunchAppShortcut = vm::launchApp,
+                                        onSetAppShortcutIcon = vm::setShortcutIcon
                                     )
 
                                     NavDestination.APP_LIBRARY -> AppLibraryScreen(
@@ -293,7 +371,21 @@ class MainActivity : ComponentActivity() {
                                         bearing      = bearing,
                                         settings     = settings,
                                         accent       = accent,
-                                        navViewModel = navVm
+                                        navViewModel = navVm,
+                                        onMapThemeModeChange = { mode -> vm.updateSettings { copy(mapThemeMode = mode) } }
+                                    )
+
+                                    NavDestination.PHONE -> PhoneScreen(
+                                        accent = accent,
+                                        onCall = ::placeCall,
+                                        favoritePhoneNumbers = settings.favoritePhoneNumbers,
+                                        onToggleFavorite = { key ->
+                                            vm.updateSettings {
+                                                val favorites = favoritePhoneNumbers
+                                                copy(favoritePhoneNumbers = if (key in favorites) favorites - key else favorites + key)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxSize()
                                     )
                                 }
                             }
@@ -332,6 +424,63 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+                if (voiceAssistantOpen) {
+                    VoiceAssistantDialog(
+                        accent = accent,
+                        languageTag = settings.appLanguage.tag,
+                        onDismiss = { voiceAssistantOpen = false },
+                        onCommand = { raw ->
+                            val command = normalizeVoiceText(raw)
+                            val currentLocation = location
+                            val places = navVm.uiState.value.savedPlaces
+                            val favoriteAlias = when {
+                                listOf("domicile", "maison", "home").any(command::contains) -> listOf("domicile", "maison", "home")
+                                listOf("travail", "bureau", "work", "office").any(command::contains) -> listOf("travail", "bureau", "work", "office")
+                                else -> emptyList()
+                            }
+                            val saved = places.firstOrNull { place ->
+                                val label = normalizeVoiceText(place.label)
+                                favoriteAlias.any { it == label } || (label.length >= 3 && command.contains(label))
+                            }
+                            when {
+                                command == "carte" || command.contains("ouvre la carte") || command == "map" || command.contains("open map") -> { vm.navigate(NavDestination.NAVIGATION); if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Opening the map." else "J’ouvre la carte." }
+                                command.contains("musique") || command.contains("lecteur audio") || command.contains("music") || command.contains("audio player") -> { vm.navigate(NavDestination.MEDIA); if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Opening the music player." else "J’ouvre le lecteur audio." }
+                                command == "accueil" || command.contains("ouvre l accueil") || command == "home" || command.contains("open home") -> { vm.navigate(NavDestination.HOME); if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Returning home." else "Retour à l’accueil." }
+                                command.contains("telephone") || command.contains("appels") || command.contains("phone") || command.contains("calls") -> { vm.navigate(NavDestination.PHONE); if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Opening the phone." else "J’ouvre le téléphone." }
+                                Regex("^(appelle|appeler|compose|telephone a|call|phone) ").containsMatchIn(command) -> {
+                                    val name = command.replace(Regex("^(appelle|appeler|compose|telephone a|call|phone)\\s*"), "").trim()
+                                    lifecycleScope.launch {
+                                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                                            speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Allow Bluetooth contacts on the Phone page before using voice calling." else "Autorisez les contacts Bluetooth dans la page Téléphone avant d’utiliser l’appel vocal.")
+                                            vm.navigate(NavDestination.PHONE)
+                                        } else {
+                                            val matches = withContext(Dispatchers.IO) { BluetoothContactsRepository.load(this@MainActivity) }
+                                                .filter { normalizeVoiceText(it.name).contains(name) }
+                                            when (matches.size) {
+                                                1 -> { speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Calling ${matches.first().name}." else "Appel de ${matches.first().name} en cours."); placeCall(matches.first().phoneNumber) }
+                                                0 -> speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "No matching Bluetooth contact for $name." else "Aucun contact Bluetooth correspondant à $name.")
+                                                else -> { vm.navigate(NavDestination.PHONE); speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "More than one contact matches. Choose the right contact on screen." else "Plusieurs contacts correspondent. Choisissez le bon contact à l’écran.") }
+                                            }
+                                        }
+                                    }
+                                    if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Searching for contact $name." else "Je cherche le contact $name."
+                                }
+                                saved != null && (command.contains("destination") || command.contains("emmene") || command.contains("va au") || command.contains("va a") || command.contains("take me") || command.contains("navigate to") || command == normalizeVoiceText(saved.label)) -> {
+                                    navVm.selectSavedPlace(saved, currentLocation); vm.navigate(NavDestination.NAVIGATION)
+                                    if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Starting route to ${saved.label}." else "Lancement de l’itinéraire vers ${saved.label}."
+                                }
+                                else -> {
+                                    val query = command.replace(Regex("^(emmene moi|conduis moi|destination|recherche|cherche|trouve|take me|navigate to|search for|find|search)( au| a| vers| to)?\\s*"), "").trim().ifBlank { raw }
+                                    vm.navigate(NavDestination.NAVIGATION)
+                                    navVm.updateSearchQuery(query, currentLocation)
+                                    navVm.onSearchSubmitted(currentLocation)
+                                    if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Here are the search results for $query." else "Voici les résultats de recherche pour $query."
+                                }
+                            }.also(speech::speak)
+                        }
+                    )
+                }
+                }
             }
             } // CompositionLocalProvider
         }
@@ -343,6 +492,11 @@ class MainActivity : ComponentActivity() {
         vm.refreshMedia()
     }
 
+    override fun onDestroy() {
+        speech.close()
+        super.onDestroy()
+    }
+
     override fun onStop() {
         super.onStop()
         vm.stopLocationUpdates()
@@ -351,5 +505,30 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         vm.startLocationUpdates()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        event?.startTracking()
+        if (vm.handleSteeringKey(keyCode, isLongPress = false)) return true
+        return when (keyCode) {
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                vm.playPause()
+                true
+            }
+            android.view.KeyEvent.KEYCODE_MEDIA_NEXT -> {
+                vm.skipNext()
+                true
+            }
+            android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
+                vm.skipPrev()
+                true
+            }
+            else -> super.onKeyDown(keyCode, event)
+        }
+    }
+
+    override fun onKeyLongPress(keyCode: Int, event: android.view.KeyEvent?): Boolean {
+        if (vm.handleSteeringKey(keyCode, isLongPress = true)) return true
+        return super.onKeyLongPress(keyCode, event)
     }
 }

@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
@@ -30,19 +32,19 @@ fun WeatherWidget(
                 verticalArrangement = Arrangement.Bottom,
                 horizontalAlignment = Alignment.Start
             ) {
-                Text(
+                LocalizedLabel(
                     text     = state.conditionIcon,
                     fontSize = 34.sp
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
+                LocalizedLabel(
                     text       = state.temperatureDisplay(metric),
                     color      = contentColor,
                     fontSize   = 32.sp,
                     fontWeight = FontWeight.Light,
                     letterSpacing = 1.sp
                 )
-                Text(
+                LocalizedLabel(
                     text          = state.conditionLabel.uppercase(),
                     color         = subColor,
                     fontSize      = 9.sp,

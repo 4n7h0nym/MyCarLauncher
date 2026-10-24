@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.screen
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -82,7 +84,7 @@ fun AppLibraryScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
+            LocalizedLabel(
                 text          = when {
                     isCarPlayPickerMode -> carPlayPickerLabel
                     anyPickerMode       -> "CHOOSE APP"
@@ -100,7 +102,7 @@ fun AppLibraryScreen(
                             selected = appFilter == filter,
                             onClick  = { appFilter = filter },
                             label    = {
-                                Text(
+                                LocalizedLabel(
                                     when (filter) {
                                         AppFilter.USER   -> "Installed"
                                         AppFilter.SYSTEM -> "System"
@@ -143,7 +145,7 @@ fun AppLibraryScreen(
                             .onFocusChanged { searchFocused = it.isFocused },
                         decorationBox = { inner ->
                             Box {
-                                if (query.isEmpty()) Text("Search…", color = placeholderC, fontSize = 13.sp)
+                                if (query.isEmpty()) LocalizedLabel("Search…", color = placeholderC, fontSize = 13.sp)
                                 inner()
                             }
                         }
@@ -163,7 +165,7 @@ fun AppLibraryScreen(
 
         if (filtered.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No apps found", color = emptyColor, letterSpacing = 1.sp, fontSize = 12.sp)
+                LocalizedLabel("No apps found", color = emptyColor, letterSpacing = 1.sp, fontSize = 12.sp)
             }
             return@Column
         }
@@ -224,11 +226,11 @@ private fun AppTile(
             )
         } else {
             Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-                Text(app.appName.take(1).uppercase(), color = accent, fontSize = 18.sp)
+                LocalizedLabel(app.appName.take(1).uppercase(), color = accent, fontSize = 18.sp)
             }
         }
         Spacer(Modifier.height(4.dp))
-        Text(
+        LocalizedLabel(
             text          = app.appName.uppercase(),
             style         = MaterialTheme.typography.labelSmall,
             color         = if (isDayMode) Color(0xFF666666) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),

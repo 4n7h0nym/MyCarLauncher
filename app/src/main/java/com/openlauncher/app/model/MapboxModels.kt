@@ -26,7 +26,8 @@ data class MapboxPoiResult(
 data class MapboxManeuverInstruction(
     val instruction: String,     // ex: "Tourner à droite dans 2 km"
     val iconType: String,         // "TURN_RIGHT", "TURN_LEFT", "STRAIGHT", "ROUNDABOUT", etc.
-    val distanceMeters: Double
+    val distanceMeters: Double,
+    val maneuverPoint: MapboxLocationPoint? = null
 )
 
 /**
@@ -54,6 +55,7 @@ data class SavedPlace(
  */
 data class NavigationUiState(
     val isNavigating: Boolean = false,
+    val selectedMapPoi: MapboxPoiResult? = null,
     
     val isSplitSearchOpen: Boolean = false,
     val splitSearchQuery: String = "",
@@ -73,7 +75,8 @@ data class NavigationUiState(
     val selectedDestination: MapboxPoiResult? = null,
     val routePoints: List<MapboxLocationPoint> = emptyList(),
     val nextManeuver: MapboxManeuverInstruction? = null,
-    val routeError: String? = null,
+    val routeSteps: List<MapboxManeuverInstruction> = emptyList(),
+    val routeStepIndex: Int = 0,
     val etaInfo: MapboxEtaInfo? = null,
 
     // Commandes de caméra
@@ -82,10 +85,13 @@ data class NavigationUiState(
 
     // État GPS et Hors-Ligne (TileStore)
     val hasLocationPermission: Boolean = false,
-    val hasMapboxToken: Boolean = false,
     val isOfflineMode: Boolean = false,
-    val offlineCacheStatus: String = "Cartes hors-ligne actives; calcul d’itinéraire en ligne",
+    val offlineCacheStatus: String = "Cache hors-ligne Mapbox TileStore actif",
 
     // Favoris et lieux enregistrés
-    val savedPlaces: List<SavedPlace> = emptyList()
+    val savedPlaces: List<SavedPlace> = listOf(
+        SavedPlace("home", "Domicile", "HOME", "Avenue des Champs-Élysées, Paris", MapboxLocationPoint(48.8698, 2.3075)),
+        SavedPlace("work", "Travail", "WORK", "La Défense, Paris", MapboxLocationPoint(48.8924, 2.2361)),
+        SavedPlace("fav_gym", "Salle de sport", "STAR", "Place de la Bastille, Paris", MapboxLocationPoint(48.8530, 2.3691))
+    )
 )

@@ -48,6 +48,7 @@ class SettingsRepository(private val context: Context) {
         val SIDEBAR_POSITION           = stringPreferencesKey("sidebar_position")
         val BOTTOM_BAR_SHORTCUTS_RIGHT = booleanPreferencesKey("bottom_bar_shortcuts_right")
         val DAY_NIGHT_MODE        = stringPreferencesKey("day_night_mode")
+        val MAP_THEME_MODE        = stringPreferencesKey("map_theme_mode")
         val SHOW_PIP              = booleanPreferencesKey("show_pip")
         val PIP_APP_PACKAGE       = stringPreferencesKey("pip_app_package")
         val RADIO_PACKAGE         = stringPreferencesKey("radio_package")
@@ -65,6 +66,17 @@ class SettingsRepository(private val context: Context) {
         val CARD_BORDER_COLOR     = intPreferencesKey("card_border_color")
         val TEXT_MUTED_COLOR      = intPreferencesKey("text_muted_color")
         val SHOW_CLOCK_WEATHER    = booleanPreferencesKey("show_clock_weather")
+        val ANNOUNCE_INCOMING_MESSAGES = booleanPreferencesKey("announce_incoming_messages")
+        val SHOW_PHONE_FAVORITES = booleanPreferencesKey("show_phone_favorites_widget")
+        val SHOW_MESSAGES = booleanPreferencesKey("show_messages_widget")
+        val SHOW_APP_SHORTCUTS = booleanPreferencesKey("show_app_shortcuts_widget")
+        val FAVORITE_PHONE_NUMBERS = stringPreferencesKey("favorite_phone_numbers_json")
+        val APP_LANGUAGE = stringPreferencesKey("app_language")
+        val LAUNCH_AT_BOOT = booleanPreferencesKey("launch_at_boot")
+        val RESTORE_LAST_PAGE = booleanPreferencesKey("restore_last_page")
+        val AUTO_RESUME_MEDIA = booleanPreferencesKey("auto_resume_media_on_bluetooth")
+        val LAST_DESTINATION = stringPreferencesKey("last_destination")
+        val STEERING_BINDINGS_JSON = stringPreferencesKey("steering_wheel_bindings_json")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -104,7 +116,23 @@ class SettingsRepository(private val context: Context) {
                 }.getOrNull() ?: defaults.savedPlaces
             } else defaults.savedPlaces
 
+            val favoritePhoneNumbers = prefs[Keys.FAVORITE_PHONE_NUMBERS]?.let { json ->
+                runCatching {
+                    gson.fromJson<List<String>>(json, object : TypeToken<List<String>>() {}.type)
+                }.getOrNull()
+            } ?: defaults.favoritePhoneNumbers
+
             return AppSettings(
+                appLanguage = prefs[Keys.APP_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() } ?: defaults.appLanguage,
+                launchAtBoot = prefs[Keys.LAUNCH_AT_BOOT] ?: defaults.launchAtBoot,
+                restoreLastPage = prefs[Keys.RESTORE_LAST_PAGE] ?: defaults.restoreLastPage,
+                autoResumeMediaOnBluetooth = prefs[Keys.AUTO_RESUME_MEDIA] ?: defaults.autoResumeMediaOnBluetooth,
+                lastDestination = prefs[Keys.LAST_DESTINATION] ?: defaults.lastDestination,
+                steeringWheelBindings = prefs[Keys.STEERING_BINDINGS_JSON]?.let { json ->
+                    runCatching {
+                        gson.fromJson<List<SteeringWheelBinding>>(json, object : TypeToken<List<SteeringWheelBinding>>() {}.type)
+                    }.getOrNull()
+                } ?: defaults.steeringWheelBindings,
                 vehicleName    = prefs[Keys.VEHICLE_NAME]     ?: defaults.vehicleName,
                 accentColor    = prefs[Keys.ACCENT_COLOR]     ?: defaults.accentColor,
                 backgroundColor = prefs[Keys.BG_COLOR]        ?: defaults.backgroundColor,
@@ -134,6 +162,7 @@ class SettingsRepository(private val context: Context) {
                                    ?: if (prefs[Keys.RIGHT_HAND_DRIVE] == true) SidebarPosition.RIGHT else defaults.sidebarPosition,
                 bottomBarShortcutsRight = prefs[Keys.BOTTOM_BAR_SHORTCUTS_RIGHT] ?: defaults.bottomBarShortcutsRight,
                 dayNightMode     = prefs[Keys.DAY_NIGHT_MODE]?.let { runCatching { DayNightMode.valueOf(it) }.getOrNull() } ?: defaults.dayNightMode,
+                mapThemeMode     = prefs[Keys.MAP_THEME_MODE]?.let { runCatching { MapThemeMode.valueOf(it) }.getOrNull() } ?: defaults.mapThemeMode,
                 showPip          = prefs[Keys.SHOW_PIP]         ?: defaults.showPip,
                 pipAppPackage    = prefs[Keys.PIP_APP_PACKAGE]  ?: defaults.pipAppPackage,
                 radioPackage     = prefs[Keys.RADIO_PACKAGE]    ?: defaults.radioPackage,
@@ -154,7 +183,12 @@ class SettingsRepository(private val context: Context) {
                 cardSurfaceColor = prefs[Keys.CARD_SURFACE_COLOR] ?: defaults.cardSurfaceColor,
                 cardBorderColor  = prefs[Keys.CARD_BORDER_COLOR]  ?: defaults.cardBorderColor,
                 textMutedColor   = prefs[Keys.TEXT_MUTED_COLOR]   ?: defaults.textMutedColor,
-                showClockWeather = prefs[Keys.SHOW_CLOCK_WEATHER] ?: defaults.showClockWeather
+                showClockWeather = prefs[Keys.SHOW_CLOCK_WEATHER] ?: defaults.showClockWeather,
+                announceIncomingMessages = prefs[Keys.ANNOUNCE_INCOMING_MESSAGES] ?: defaults.announceIncomingMessages,
+                showPhoneFavorites = prefs[Keys.SHOW_PHONE_FAVORITES] ?: defaults.showPhoneFavorites,
+                showMessages = prefs[Keys.SHOW_MESSAGES] ?: defaults.showMessages,
+                showAppShortcuts = prefs[Keys.SHOW_APP_SHORTCUTS] ?: defaults.showAppShortcuts,
+                favoritePhoneNumbers = favoritePhoneNumbers
             )
     }
 
@@ -167,6 +201,14 @@ class SettingsRepository(private val context: Context) {
     }
 
     private fun writeSettings(prefs: MutablePreferences, s: AppSettings) {
+            prefs[Keys.LAUNCH_AT_BOOT] = s.launchAtBoot
+            prefs[Keys.RESTORE_LAST_PAGE] = s.restoreLastPage
+            prefs[Keys.AUTO_RESUME_MEDIA] = s.autoResumeMediaOnBluetooth
+            prefs[Keys.LAST_DESTINATION] = s.lastDestination
+            prefs[Keys.STEERING_BINDINGS_JSON] = gson.toJson(s.steeringWheelBindings)
+            context.getSharedPreferences("launcher_runtime", Context.MODE_PRIVATE)
+                .edit().putBoolean("launch_at_boot", s.launchAtBoot).apply()
+            prefs[Keys.APP_LANGUAGE]      = s.appLanguage.name
             prefs[Keys.VEHICLE_NAME]       = s.vehicleName
             prefs[Keys.ACCENT_COLOR]       = s.accentColor
             prefs[Keys.BG_COLOR]           = s.backgroundColor
@@ -195,6 +237,7 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.SIDEBAR_POSITION]           = s.sidebarPosition.name
             prefs[Keys.BOTTOM_BAR_SHORTCUTS_RIGHT] = s.bottomBarShortcutsRight
             prefs[Keys.DAY_NIGHT_MODE]     = s.dayNightMode.name
+            prefs[Keys.MAP_THEME_MODE]     = s.mapThemeMode.name
             prefs[Keys.SHOW_PIP]           = s.showPip
             prefs[Keys.PIP_APP_PACKAGE]    = s.pipAppPackage
             prefs[Keys.RADIO_PACKAGE]      = s.radioPackage
@@ -212,9 +255,15 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.CARD_BORDER_COLOR]  = s.cardBorderColor
             prefs[Keys.TEXT_MUTED_COLOR]   = s.textMutedColor
             prefs[Keys.SHOW_CLOCK_WEATHER] = s.showClockWeather
+            prefs[Keys.ANNOUNCE_INCOMING_MESSAGES] = s.announceIncomingMessages
+            prefs[Keys.SHOW_PHONE_FAVORITES] = s.showPhoneFavorites
+            prefs[Keys.SHOW_MESSAGES] = s.showMessages
+            prefs[Keys.SHOW_APP_SHORTCUTS] = s.showAppShortcuts
+            prefs[Keys.FAVORITE_PHONE_NUMBERS] = gson.toJson(s.favoritePhoneNumbers)
     }
 
     suspend fun resetToDefaults() {
         context.dataStore.edit { it.clear() }
+        context.getSharedPreferences("launcher_runtime", Context.MODE_PRIVATE).edit().remove("launch_at_boot").apply()
     }
 }

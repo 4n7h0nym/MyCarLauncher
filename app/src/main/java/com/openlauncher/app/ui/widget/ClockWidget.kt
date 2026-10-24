@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
@@ -57,14 +59,14 @@ private fun DigitalClock(cal: Calendar, contentColor: Color, subColor: Color) {
         verticalArrangement = Arrangement.Bottom,
         horizontalAlignment = Alignment.Start
     ) {
-        Text(
+        LocalizedLabel(
             text          = "%02d:%02d".format(hour, minute),
             color         = contentColor,
             fontSize      = 48.sp,
             fontWeight    = androidx.compose.ui.text.font.FontWeight.Light,
             letterSpacing = 1.sp
         )
-        Text(
+        LocalizedLabel(
             text     = buildDateString(cal),
             color    = subColor,
             fontSize = 12.sp
@@ -160,7 +162,7 @@ private fun AnalogClock(cal: Calendar, accent: Color, isDayMode: Boolean = false
         }
 
         // Date inset — centered, above 6 o'clock position like a real watch
-        Text(
+        LocalizedLabel(
             text      = shortDateString(cal),
             color     = if (isDayMode) Color(0xFF999999) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
             fontSize  = 9.sp,

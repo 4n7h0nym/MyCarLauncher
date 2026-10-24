@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.components
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,11 +55,11 @@ fun ColorPickerDialog(
         containerColor    = Color(0xFF1A1A1A),
         titleContentColor = Color.White,
         textContentColor  = Color(0xFFCCCCCC),
-        title = { Text(title) },
+        title = { LocalizedLabel(title) },
         text  = {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 // Preset swatches
-                Text("Presets", style = MaterialTheme.typography.labelMedium, color = Color(0xFF888888))
+                LocalizedLabel("Presets", style = MaterialTheme.typography.labelMedium, color = Color(0xFF888888))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     accentPresets.forEachIndexed { i, color ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -74,7 +76,7 @@ fun ColorPickerDialog(
                                     .clickable { syncFrom(color) }
                             )
                             Spacer(Modifier.height(2.dp))
-                            Text(accentPresetLabels[i], style = MaterialTheme.typography.labelSmall, color = Color(0xFF555555), fontSize = androidx.compose.ui.unit.TextUnit(8f, androidx.compose.ui.unit.TextUnitType.Sp))
+                            LocalizedLabel(accentPresetLabels[i], style = MaterialTheme.typography.labelSmall, color = Color(0xFF555555), fontSize = androidx.compose.ui.unit.TextUnit(8f, androidx.compose.ui.unit.TextUnitType.Sp))
                         }
                     }
                 }
@@ -82,10 +84,10 @@ fun ColorPickerDialog(
                 Divider(color = Color(0xFF2A2A2A))
 
                 // Custom HSV sliders
-                Text("Custom", style = MaterialTheme.typography.labelMedium, color = Color(0xFF888888))
+                LocalizedLabel("Custom", style = MaterialTheme.typography.labelMedium, color = Color(0xFF888888))
 
                 // Hue slider
-                Text("Hue", style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
+                LocalizedLabel("Hue", style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
                 Slider(
                     value = hue / 360f,
                     onValueChange = { hue = it * 360f; rebuildColor() },
@@ -106,7 +108,7 @@ fun ColorPickerDialog(
                 )
 
                 // Saturation slider
-                Text("Saturation", style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
+                LocalizedLabel("Saturation", style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
                 Slider(
                     value = sat,
                     onValueChange = { sat = it; rebuildColor() },
@@ -126,7 +128,7 @@ fun ColorPickerDialog(
                 )
 
                 // Brightness slider
-                Text("Brightness", style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
+                LocalizedLabel("Brightness", style = MaterialTheme.typography.labelSmall, color = Color(0xFF666666))
                 Slider(
                     value = value,
                     onValueChange = { value = it; rebuildColor() },
@@ -165,11 +167,11 @@ fun ColorPickerDialog(
                     contentColor   = if (selectedColor.luminance() > 0.5f) Color.Black else Color.White
                 )
             ) {
-                Text("Apply")
+                LocalizedLabel("Apply")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = Color(0xFFAAAAAA)) }
+            TextButton(onClick = onDismiss) { LocalizedLabel("Cancel", color = Color(0xFFAAAAAA)) }
         }
     )
 }

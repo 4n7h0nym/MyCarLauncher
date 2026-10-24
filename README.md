@@ -64,6 +64,15 @@ Most head units rely on wireless CarPlay or Android Auto for navigation and medi
 * **Adaptive Modes**: Forced Dark/Light, System Sync, and automated Sunset/Sunrise calculations based on offline coordinates.
 * **Deep Customization**: Dynamic accent color, background gradients, wallpaper dimming, text scale, and custom fonts.
 
+### 🚗 Démarrage automobile fiable
+Ouverture instantanée au démarrage de l’autoradio, restauration automatique de la dernière page active et reconnexion automatique aux appareils connectés.
+
+### 🛞 Commandes au volant
+Prise en charge complète des boutons physiques du volant (média, téléphone et navigation), avec options de configuration adaptées à chaque autoradio.
+
+### 💾 Sauvegarde et restauration
+Conservez et restaurez tous vos réglages, widgets, favoris et cartes hors-ligne sélectionnées après une réinstallation ou un changement d’appareil.
+
 ---
 
 ## 🤝 Contributing

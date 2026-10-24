@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.widget
 
+import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -50,7 +52,7 @@ fun ClockWeatherWidget(
         ) {
             val hour   = calendar.get(Calendar.HOUR_OF_DAY)
             val minute = calendar.get(Calendar.MINUTE)
-            Text(
+            LocalizedLabel(
                 text          = "%02d:%02d".format(hour, minute),
                 color         = contentColor,
                 fontSize      = 42.sp,
@@ -58,7 +60,7 @@ fun ClockWeatherWidget(
                 letterSpacing = 1.sp
             )
             Spacer(Modifier.height(2.dp))
-            Text(
+            LocalizedLabel(
                 text     = buildWidgetDateString(calendar),
                 color    = subColor,
                 fontSize = 11.sp
@@ -72,7 +74,7 @@ fun ClockWeatherWidget(
         ) {
             if (weather != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
+                    LocalizedLabel(
                         text = "${weather.temperatureCelsius.toInt()}°",
                         color = contentColor,
                         fontSize = 36.sp,
@@ -80,7 +82,7 @@ fun ClockWeatherWidget(
                     )
                 }
                 Spacer(Modifier.height(2.dp))
-                Text(
+                LocalizedLabel(
                     text = weather.conditionLabel.uppercase(Locale.getDefault()),
                     color = accent,
                     fontSize = 10.sp,
@@ -88,7 +90,7 @@ fun ClockWeatherWidget(
                     letterSpacing = 1.sp
                 )
             } else {
-                Text(
+                LocalizedLabel(
                     text = "WEATHER LOADING...",
                     color = subColor,
                     fontSize = 10.sp,

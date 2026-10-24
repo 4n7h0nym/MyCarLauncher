@@ -62,4 +62,21 @@ class NavigationRepository(context: Context) {
     suspend fun deleteSaved(id: String) {
         dao.deleteSaved(id)
     }
+
+    suspend fun replaceSavedPlaces(places: List<SavedPlace>) {
+        dao.deleteAllSavedDestinations()
+        places.forEach { place ->
+            val point = place.point ?: return@forEach
+            dao.insertSaved(
+                SavedDestinationEntity(
+                    id = place.id,
+                    label = place.label,
+                    address = place.address,
+                    latitude = point.latitude,
+                    longitude = point.longitude,
+                    iconName = place.iconName
+                )
+            )
+        }
+    }
 }

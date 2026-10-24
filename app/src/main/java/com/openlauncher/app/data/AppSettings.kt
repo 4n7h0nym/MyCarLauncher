@@ -9,8 +9,13 @@ enum class ClockStyle { DIGITAL, ANALOG }
 enum class UnitSystem { METRIC, IMPERIAL }
 enum class AppFont { SYSTEM, JETBRAINS_MONO, SOURCE_CODE_PRO }
 enum class DayNightMode { DARK, LIGHT, AUTO, SYSTEM }
+enum class MapThemeMode { FOLLOW_APP, LIGHT, DARK }
 enum class SidebarPosition { LEFT, RIGHT, BOTTOM }
 enum class GradientDirection { TOP_TO_BOTTOM, LEFT_TO_RIGHT, DIAGONAL, RADIAL }
+enum class AppLanguage(val tag: String, val label: String) {
+    FRENCH_CANADA("fr-CA", "Français (Canada)"),
+    ENGLISH_CANADA("en-CA", "English (Canada)")
+}
 
 enum class DefaultShortcutIcon {
     NONE,
@@ -57,9 +62,33 @@ data class WidgetConfig(
     val enabled: Boolean = true
 )
 
-fun defaultSavedPlaces() = emptyList<SavedPlace>()
+enum class SteeringWheelAction { PLAY_PAUSE, NEXT_TRACK, PREVIOUS_TRACK, OPEN_PHONE, OPEN_NAVIGATION, VOLUME_UP, VOLUME_DOWN, VOICE_ASSISTANT }
+
+data class SteeringWheelBinding(
+    val keyCode: Int,
+    val action: SteeringWheelAction,
+    val longPressAction: SteeringWheelAction? = null
+)
+
+fun defaultSavedPlaces() = listOf(
+    SavedPlace("home", "Domicile", "HOME", "Avenue des Champs-Élysées, Paris", MapboxLocationPoint(48.8698, 2.3075)),
+    SavedPlace("work", "Travail", "WORK", "La Défense, Paris", MapboxLocationPoint(48.8924, 2.2361)),
+    SavedPlace("fav_gym", "Salle de sport", "STAR", "Place de la Bastille, Paris", MapboxLocationPoint(48.8530, 2.3691))
+)
 
 data class AppSettings(
+    val appLanguage: AppLanguage = AppLanguage.FRENCH_CANADA,
+    val launchAtBoot: Boolean = true,
+    val restoreLastPage: Boolean = true,
+    val autoResumeMediaOnBluetooth: Boolean = true,
+    val lastDestination: String = "HOME",
+    val steeringWheelBindings: List<SteeringWheelBinding> = listOf(
+        SteeringWheelBinding(85, SteeringWheelAction.PLAY_PAUSE),
+        SteeringWheelBinding(87, SteeringWheelAction.NEXT_TRACK),
+        SteeringWheelBinding(88, SteeringWheelAction.PREVIOUS_TRACK),
+        SteeringWheelBinding(5, SteeringWheelAction.OPEN_PHONE)
+    ),
+    val announceIncomingMessages: Boolean = false,
     val vehicleName: String = "MY CAR",
     val accentColor: Int = Color(0xFF4285F4).toArgb(),
     val backgroundColor: Int = Color.Black.toArgb(),
@@ -87,6 +116,7 @@ data class AppSettings(
     val showAltimeter: Boolean = false,
     val showSpeedometer: Boolean = false,
     val dayNightMode: DayNightMode = DayNightMode.DARK,
+    val mapThemeMode: MapThemeMode = MapThemeMode.FOLLOW_APP,
     val showPip: Boolean = false,
     val pipAppPackage: String = "",
     val radioPackage: String = "",
@@ -104,6 +134,10 @@ data class AppSettings(
     val cardBorderColor: Int = Color(0xFF2D2D35).toArgb(),
     val textMutedColor: Int = Color(0xFF9AA0A6).toArgb(),
     val showClockWeather: Boolean = false,
+    val showPhoneFavorites: Boolean = false,
+    val showMessages: Boolean = false,
+    val showAppShortcuts: Boolean = false,
+    val favoritePhoneNumbers: List<String> = emptyList(),
     val homeAddress: String = "Home",
     val workAddress: String = "Work",
     val savedPlaces: List<SavedPlace> = defaultSavedPlaces()
@@ -134,6 +168,9 @@ fun AppSettings.activeWidgetIds(): Set<String> = buildSet {
     if (showTripTracker) add("TRIP_TRACKER")
     if (showSoundboard) add("SOUNDBOARD")
     if (showClockWeather) add("CLOCK_WEATHER")
+    if (showPhoneFavorites) add("PHONE_FAVORITES")
+    if (showMessages) add("MESSAGES")
+    if (showAppShortcuts) add("APP_SHORTCUTS")
 }
 
 fun computeWidgetMove(
