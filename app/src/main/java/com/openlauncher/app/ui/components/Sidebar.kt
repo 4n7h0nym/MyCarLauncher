@@ -29,8 +29,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val ICON_SIZE   = 22.dp
-private val SLOT_SIZE   = 52.dp
+private val ICON_SIZE = 30.dp
+private val VERTICAL_SLOT_SIZE = 64.75.dp
+private val HORIZONTAL_SLOT_SIZE = 82.dp
+private val SIDEBAR_WIDGET_SIDE_MARGIN = 14.dp
+private val SIDEBAR_WIDGET_VERTICAL_MARGIN = 4.dp
+private val SIDEBAR_WIDGET_HEIGHT = 46.dp
+private val HORIZONTAL_BAR_HEIGHT = HORIZONTAL_SLOT_SIZE
 
 @Composable
 fun Sidebar(
@@ -48,14 +53,14 @@ fun Sidebar(
 ) {
     val isDayMode    = LocalDayMode.current
     val accent       = Color(settings.accentColor)
-    val sidebarBg    = if (isDayMode) Color(0xFFE0E0E0) else Color.Black.copy(alpha = 0.4f)
-    val iconInactive = if (isDayMode) Color(0xFF777777) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.3f)
+    val sidebarBg    = if (isDayMode) Color(0xFFE0E0E0) else Color.Black.copy(alpha = 0.62f)
+    val iconInactive = if (isDayMode) Color(0xFF666666) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f)
     val dividerColor = if (isDayMode) Color(0xFFCCCCCC) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
     if (isHorizontal) {
         Box(
             modifier = modifier
                 .fillMaxWidth()
-                .height(56.dp)
+                .height(HORIZONTAL_BAR_HEIGHT)
                 .background(sidebarBg)
         ) {
             Row(
@@ -86,19 +91,24 @@ fun Sidebar(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .padding(horizontal = 268.dp),
+                        .padding(
+                            start = HORIZONTAL_SLOT_SIZE * 5 + SIDEBAR_WIDGET_SIDE_MARGIN,
+                            end = HORIZONTAL_SLOT_SIZE * 4 + SIDEBAR_WIDGET_SIDE_MARGIN,
+                            top = SIDEBAR_WIDGET_VERTICAL_MARGIN,
+                            bottom = SIDEBAR_WIDGET_VERTICAL_MARGIN
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f), MaterialTheme.shapes.medium)
+                            .height(SIDEBAR_WIDGET_HEIGHT)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), MaterialTheme.shapes.medium)
                             .clickable { onNavigate(NavDestination.NAVIGATION) }
                             .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Navigation, contentDescription = null, tint = accent, modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.Navigation, contentDescription = null, tint = accent, modifier = Modifier.size(26.dp))
                         Spacer(Modifier.width(10.dp))
                         Column {
                             LocalizedLabel("PROCHAINE ÉTAPE", style = MaterialTheme.typography.labelSmall, color = accent)
@@ -111,19 +121,24 @@ fun Sidebar(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .padding(horizontal = 268.dp),
+                        .padding(
+                            start = HORIZONTAL_SLOT_SIZE * 5 + SIDEBAR_WIDGET_SIDE_MARGIN,
+                            end = HORIZONTAL_SLOT_SIZE * 4 + SIDEBAR_WIDGET_SIDE_MARGIN,
+                            top = SIDEBAR_WIDGET_VERTICAL_MARGIN,
+                            bottom = SIDEBAR_WIDGET_VERTICAL_MARGIN
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f), MaterialTheme.shapes.medium)
+                            .height(SIDEBAR_WIDGET_HEIGHT)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), MaterialTheme.shapes.medium)
                             .clickable { onNavigate(NavDestination.MEDIA) }
                             .padding(horizontal = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = accent, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             LocalizedLabel(
@@ -139,16 +154,16 @@ fun Sidebar(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(onClick = onPlayPause, enabled = nowPlaying != null, modifier = Modifier.size(36.dp)) {
+                        IconButton(onClick = onPlayPause, enabled = nowPlaying != null, modifier = Modifier.size(40.dp)) {
                             Icon(
                                 if (nowPlaying?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 contentDescription = if (nowPlaying?.isPlaying == true) "Pause" else "Lecture",
                                 tint = accent,
-                                modifier = Modifier.size(19.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
-                        IconButton(onClick = onSkipNext, enabled = nowPlaying != null, modifier = Modifier.size(36.dp)) {
-                            Icon(Icons.Default.SkipNext, contentDescription = "Suivant", tint = accent, modifier = Modifier.size(21.dp))
+                        IconButton(onClick = onSkipNext, enabled = nowPlaying != null, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.SkipNext, contentDescription = "Suivant", tint = accent, modifier = Modifier.size(26.dp))
                         }
                     }
                 }
@@ -165,7 +180,7 @@ fun Sidebar(
         }
         Column(
             modifier = modifier
-                .width(56.dp)
+                .width(HORIZONTAL_SLOT_SIZE)
                 .fillMaxHeight()
                 .background(sidebarBg),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -173,11 +188,11 @@ fun Sidebar(
             LocalizedLabel(
                 text = currentTime,
                 color = if (isDayMode) Color(0xFF333333) else Color.White,
-                fontSize = 13.sp,
+                fontSize = 16.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp)
             )
             Column(
                 modifier = Modifier
@@ -237,7 +252,7 @@ fun Sidebar(
             HorizontalDivider(color = dividerColor)
             NavButton(
                 icon = Icons.Default.Mic,
-                label = "Assistant vocal",
+                label = "Voice",
                 isActive = false,
                 accent = accent,
                 iconInactive = iconInactive,
@@ -271,7 +286,7 @@ fun Sidebar(
                 isHorizontal = false,
                 onClick      = { onNavigate(NavDestination.SETTINGS) }
             )
-            Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
         }
     }
 
@@ -293,17 +308,17 @@ private fun NavButton(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .then(
-                if (isHorizontal) Modifier.fillMaxHeight().width(SLOT_SIZE)
-                else              Modifier.fillMaxWidth().height(SLOT_SIZE)
+                if (isHorizontal) Modifier.fillMaxHeight().width(HORIZONTAL_SLOT_SIZE)
+                else              Modifier.fillMaxWidth().height(VERTICAL_SLOT_SIZE)
             )
             .background(if (isActive) activeBg else Color.Transparent)
             .clickable(onClick = onClick)
     ) {
         Icon(
-            imageVector        = icon,
+            imageVector = icon,
             contentDescription = label,
-            tint               = if (isActive) activeIconColor else iconInactive,
-            modifier           = Modifier.size(ICON_SIZE)
+            tint = if (isActive) activeIconColor else iconInactive,
+            modifier = Modifier.size(ICON_SIZE)
         )
     }
 }

@@ -17,6 +17,9 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.CALL_PHONE" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Legacy Android needs these normal permissions to inspect paired devices. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
@@ -48,6 +51,17 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <queries>
+        <package android:name="com.jancar.btservice" />
+        <!-- Optional OEM PBAP providers used by selected car head units. -->
+        <provider android:authorities="bt_contacts" />
+        <provider android:authorities="com.android.bluetooth.pbap" />
+        <provider android:authorities="bluetooth" />
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />

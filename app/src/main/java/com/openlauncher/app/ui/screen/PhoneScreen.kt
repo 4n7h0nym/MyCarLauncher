@@ -4,10 +4,16 @@ import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.database.ContentObserver
+import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.ContactsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -28,16 +34,104 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.openlauncher.app.data.BluetoothContactsRepository
+import com.openlauncher.app.data.JancarBluetoothManager
 import com.openlauncher.app.model.PhoneContact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+
+@Composable
+private fun DialKey(key: String, onClick: () -> Unit) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier.size(88.dp),
+        shape = CircleShape,
+        contentPadding = PaddingValues(0.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
+        )
+    ) {
+        LocalizedLabel(key, fontSize = 31.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ContactsPanel(
+    modifier: Modifier,
+    accent: Color,
+    hasRequiredPermissions: Boolean,
+    displayedContacts: List<PhoneContact>,
+    filteredContacts: List<PhoneContact>,
+    loading: Boolean,
+    accessDenied: Boolean,
+    permissionLauncher: () -> Unit,
+    favoritePhoneNumbers: List<String>,
+    onToggleFavorite: (String) -> Unit,
+    onCall: (String) -> Unit
+) {
+    Column(modifier) {
+        LocalizedLabel("CONTACTS BLUETOOTH", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(6.dp))
+        when {
+            !hasRequiredPermissions && displayedContacts.isEmpty() -> {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    LocalizedLabel(
+                        "Autorisez les contacts et Bluetooth pour afficher le répertoire PBAP synchronisé.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                    Button(onClick = permissionLauncher, colors = ButtonDefaults.buttonColors(containerColor = accent)) {
+                        LocalizedLabel(if (accessDenied) "Réessayer" else "Autoriser")
+                    }
+                }
+            }
+            loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = accent)
+            }
+            displayedContacts.isEmpty() -> LocalizedLabel(
+                "Aucun contact Bluetooth/PBAP synchronisé. Connectez votre téléphone et activez la synchronisation des contacts dans les réglages Bluetooth de l’autoradio.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            filteredContacts.isEmpty() -> LocalizedLabel(
+                "Aucun contact correspondant.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                items(filteredContacts, key = { it.id }) { contact ->
+                    val contactKey = BluetoothContactsRepository.phoneKey(contact.phoneNumber)
+                    ListItem(
+                        headlineContent = {
+                            LocalizedLabel(contact.name, maxLines = 1, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                        },
+                        supportingContent = {
+                            LocalizedLabel(contact.phoneNumber, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.fillMaxWidth().clickable { onCall(contact.phoneNumber) },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        trailingContent = {
+                            IconButton(onClick = { onToggleFavorite(contactKey) }) {
+                                Icon(
+                                    imageVector = if (contactKey in favoritePhoneNumbers) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = if (contactKey in favoritePhoneNumbers) "Retirer des favoris" else "Ajouter aux favoris",
+                                    tint = if (contactKey in favoritePhoneNumbers) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun PhoneScreen(
@@ -48,6 +142,7 @@ fun PhoneScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val jancarContacts by JancarBluetoothManager.contacts.collectAsState()
     var dialText by remember { mutableStateOf("") }
     var contacts by remember { mutableStateOf<List<PhoneContact>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -67,13 +162,15 @@ fun PhoneScreen(
         accessDenied = result.values.any { !it }
         refreshToken++
     }
-    val hasContactsPermission = ContextCompat.checkSelfPermission(
-        context,
-        Manifest.permission.READ_CONTACTS
-    ) == PackageManager.PERMISSION_GRANTED
+    val hasRequiredPermissions = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.READ_CONTACTS
+    ) == PackageManager.PERMISSION_GRANTED &&
+        (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || ContextCompat.checkSelfPermission(
+            context, Manifest.permission.BLUETOOTH_CONNECT
+        ) == PackageManager.PERMISSION_GRANTED)
 
-    LaunchedEffect(refreshToken, hasContactsPermission) {
-        if (hasContactsPermission) {
+    LaunchedEffect(refreshToken, hasRequiredPermissions) {
+        if (hasRequiredPermissions) {
             loading = true
             contacts = withContext(Dispatchers.IO) {
                 runCatching { BluetoothContactsRepository.load(context) }.getOrDefault(emptyList())
@@ -84,13 +181,48 @@ fun PhoneScreen(
         }
     }
 
-    val filteredContacts = remember(contacts, dialText) {
-        if (dialText.isBlank()) contacts
-        else contacts.filter { it.name.contains(dialText, ignoreCase = true) || it.phoneNumber.contains(dialText) }
+    // PBAP synchronization can finish after this screen first opens. Refresh
+    // when Android's ContactsProvider changes and whenever the screen resumes.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val contactChangeHandler = remember { Handler(Looper.getMainLooper()) }
+    val reloadAfterContactChange = remember { Runnable { refreshToken++ } }
+    DisposableEffect(context, lifecycleOwner, hasRequiredPermissions) {
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshToken++
+        }
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+
+        val contentObserver = if (hasRequiredPermissions) object : ContentObserver(contactChangeHandler) {
+            override fun onChange(selfChange: Boolean, uri: Uri?) {
+                contactChangeHandler.removeCallbacks(reloadAfterContactChange)
+                contactChangeHandler.postDelayed(reloadAfterContactChange, 400L)
+            }
+        } else null
+        contentObserver?.let { observer ->
+            context.contentResolver.registerContentObserver(ContactsContract.Contacts.CONTENT_URI, true, observer)
+            context.contentResolver.registerContentObserver(ContactsContract.RawContacts.CONTENT_URI, true, observer)
+            context.contentResolver.registerContentObserver(ContactsContract.Data.CONTENT_URI, true, observer)
+        }
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
+            contentObserver?.let(context.contentResolver::unregisterContentObserver)
+            contactChangeHandler.removeCallbacks(reloadAfterContactChange)
+        }
     }
 
-    val favoriteContacts = remember(contacts, favoritePhoneNumbers) {
-        contacts.filter { BluetoothContactsRepository.phoneKey(it.phoneNumber) in favoritePhoneNumbers }
+    val displayedContacts = remember(contacts, jancarContacts) {
+        (jancarContacts + contacts)
+            .distinctBy { BluetoothContactsRepository.phoneKey(it.phoneNumber) }
+            .sortedBy { it.name.lowercase() }
+    }
+    val filteredContacts = remember(displayedContacts, dialText) {
+        if (dialText.isBlank()) displayedContacts
+        else displayedContacts.filter { it.name.contains(dialText, ignoreCase = true) || it.phoneNumber.contains(dialText) }
+    }
+
+    val favoriteContacts = remember(displayedContacts, favoritePhoneNumbers) {
+        displayedContacts.filter { BluetoothContactsRepository.phoneKey(it.phoneNumber) in favoritePhoneNumbers }
     }
 
     Column(
@@ -122,7 +254,13 @@ fun PhoneScreen(
                     label = { LocalizedLabel("Favoris (${favoriteContacts.size})") },
                     colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accent, selectedLabelColor = Color.Black)
                 )
-                IconButton(onClick = { refreshToken++ }) {
+                IconButton(onClick = {
+                    // The refresh icon should run the same Jancar PBAP Binder
+                    // request used during startup, not only reread Android's
+                    // local ContactsProvider.
+                    JancarBluetoothManager.requestContacts(force = true)
+                    refreshToken++
+                }) {
                     Icon(Icons.Default.Refresh, contentDescription = "Actualiser les contacts", tint = accent)
                 }
             }
@@ -144,11 +282,45 @@ fun PhoneScreen(
                 shape = RoundedCornerShape(16.dp)
             )
 
-            Row(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-                verticalAlignment = Alignment.CenterVertically
+            BoxWithConstraints(
+                modifier = Modifier.weight(1f).fillMaxWidth()
             ) {
+                val narrowLayout = maxWidth < 700.dp
+                if (narrowLayout) {
+                    Column(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            modifier = Modifier.width(310.dp).height(380.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")) { key ->
+                                DialKey(key = key, onClick = { dialText += key })
+                            }
+                        }
+                        ContactsPanel(
+                            modifier = Modifier.fillMaxWidth().weight(1f),
+                            accent = accent,
+                            hasRequiredPermissions = hasRequiredPermissions,
+                            displayedContacts = displayedContacts,
+                            filteredContacts = filteredContacts,
+                            loading = loading,
+                            accessDenied = accessDenied,
+                            permissionLauncher = { permissionLauncher.launch(requiredPermissions) },
+                            favoritePhoneNumbers = favoritePhoneNumbers,
+                            onToggleFavorite = onToggleFavorite,
+                            onCall = onCall
+                        )
+                    }
+                } else Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                 // Completely round keypad buttons
                 Box(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -156,67 +328,29 @@ fun PhoneScreen(
                 ) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(3),
-                        modifier = Modifier.width(240.dp),
+                            modifier = Modifier.width(310.dp),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#")) { key ->
-                            FilledTonalButton(
-                                onClick = { dialText += key },
-                                modifier = Modifier.size(56.dp), // Perfect circle width & height
-                                shape = CircleShape,
-                                contentPadding = PaddingValues(0.dp),
-                                colors = ButtonDefaults.filledTonalButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f)
-                                )
-                            ) {
-                                LocalizedLabel(key, fontSize = 21.sp, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-                            }
+                            DialKey(key = key, onClick = { dialText += key })
                         }
                     }
                 }
 
-                Column(Modifier.weight(1.15f).fillMaxHeight()) {
-                    LocalizedLabel("CONTACTS BLUETOOTH", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(8.dp))
-                    when {
-                        !hasContactsPermission -> {
-                            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                LocalizedLabel("Autorisez les contacts et Bluetooth pour afficher le répertoire PBAP synchronisé.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-                                Button(onClick = { permissionLauncher.launch(requiredPermissions) }, colors = ButtonDefaults.buttonColors(containerColor = accent)) {
-                                    LocalizedLabel(if (accessDenied) "Réessayer" else "Autoriser")
-                                }
-                            }
-                        }
-                        loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = accent) }
-                        contacts.isEmpty() -> LocalizedLabel(
-                            "Aucun contact Bluetooth/PBAP synchronisé. Connectez votre téléphone et activez la synchronisation des contacts dans les réglages Bluetooth de l’autoradio.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(filteredContacts, key = { it.id }) { contact ->
-                                ListItem(
-                                    headlineContent = { LocalizedLabel(contact.name, maxLines = 1) },
-                                    supportingContent = { LocalizedLabel(contact.phoneNumber) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                                    trailingContent = {
-                                        val contactKey = BluetoothContactsRepository.phoneKey(contact.phoneNumber)
-                                        IconButton(onClick = { onToggleFavorite(contactKey) }) {
-                                            Icon(
-                                                imageVector = if (contactKey in favoritePhoneNumbers) Icons.Default.Star else Icons.Default.StarBorder,
-                                                contentDescription = if (contactKey in favoritePhoneNumbers) "Retirer des favoris" else "Ajouter aux favoris",
-                                                tint = if (contactKey in favoritePhoneNumbers) Color(0xFFFFC107) else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                        IconButton(onClick = { onCall(contact.phoneNumber) }) {
-                                            Icon(Icons.Default.Call, contentDescription = "Appeler ${contact.name}", tint = accent)
-                                        }
-                                    }
-                                )
-                            }
-                        }
-                    }
+                ContactsPanel(
+                    modifier = Modifier.weight(1.15f).fillMaxHeight(),
+                    accent = accent,
+                    hasRequiredPermissions = hasRequiredPermissions,
+                    displayedContacts = displayedContacts,
+                    filteredContacts = filteredContacts,
+                    loading = loading,
+                    accessDenied = accessDenied,
+                    permissionLauncher = { permissionLauncher.launch(requiredPermissions) },
+                    favoritePhoneNumbers = favoritePhoneNumbers,
+                    onToggleFavorite = onToggleFavorite,
+                    onCall = onCall
+                )
                 }
             }
 

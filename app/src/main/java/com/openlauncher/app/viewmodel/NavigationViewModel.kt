@@ -47,6 +47,36 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     init {
         setupMapboxOfflineTileStore()
         observeDatabaseData()
+        viewModelScope.launch {
+            OfflineRouteEngine.routeUpdates.collect { route ->
+                if (!_uiState.value.isNavigating) return@collect
+                val maneuvers = route.steps.filterNot { it.iconType.contains("DEPART") }.ifEmpty { route.steps }
+                val durationSeconds = route.durationSeconds.coerceAtLeast(60.0)
+                val durationMinutes = (durationSeconds / 60.0).toInt().coerceAtLeast(1)
+                val durationText = if (durationMinutes >= 60) "${durationMinutes / 60}h ${durationMinutes % 60}min" else "$durationMinutes min"
+                val distanceText = if (route.distanceMeters >= 1000) "%.1f km".format(route.distanceMeters / 1000.0) else "${route.distanceMeters.toInt()} m"
+                val etaTimeText = SimpleDateFormat("HH:mm", Locale.getDefault()).format(
+                    Calendar.getInstance().apply { add(Calendar.SECOND, durationSeconds.toInt()) }.time
+                )
+                _uiState.update { state ->
+                    if (!state.isNavigating) state else state.copy(
+                        routePoints = route.points,
+                        routeProgressIndex = 0,
+                        routeSteps = maneuvers,
+                        routeStepIndex = 0,
+                        nextManeuver = maneuvers.firstOrNull(),
+                        etaInfo = MapboxEtaInfo(durationText, etaTimeText, distanceText)
+                    )
+                }
+            }
+        }
+        viewModelScope.launch {
+            OfflineRouteEngine.routeProgressIndexes.collect { geometryIndex ->
+                _uiState.update { state ->
+                    if (!state.isNavigating) state else state.copy(routeProgressIndex = geometryIndex.coerceAtLeast(0))
+                }
+            }
+        }
     }
 
     private fun setupMapboxOfflineTileStore() {
@@ -105,19 +135,10 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 return
             }
 
-            val minDistanceToRoute = computeMinDistanceToRouteMeters(location, currentState.routePoints)
-            if (minDistanceToRoute > 45 && !currentState.isOfflineMode) {
-                if (routeJob?.isActive != true) {
-                    routeJob = viewModelScope.launch(Dispatchers.IO) {
-                        calculateFastestRoute(destPoint, location)
-                    }
-                }
-            } else {
-                if (currentState.isOfflineMode && currentState.routeSteps.isNotEmpty()) {
-                    advanceOfflineManeuver(location, currentState.routeSteps, currentState.routeStepIndex)
-                }
-                updateRemainingEtaAndManeuver(location, currentState.routePoints)
+            if (currentState.routeSteps.isNotEmpty()) {
+                advanceOfflineManeuver(location, currentState.routeSteps, currentState.routeStepIndex)
             }
+            updateRemainingEtaAndManeuver(location, currentState.routePoints)
         }
     }
 
@@ -244,6 +265,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 selectedMapPoi = null,
                 selectedDestination = poi,
                 routePoints = emptyList(),
+                routeProgressIndex = 0,
                 etaInfo = null,
                 nextManeuver = null,
                 routeSteps = emptyList(),
@@ -386,6 +408,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     fun stopNavigation() {
         routeJob?.cancel()
         routeJob = null
+        OfflineRouteEngine.stopGuidance()
         _uiState.update {
             it.copy(
                 isNavigating = false,
@@ -415,178 +438,64 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun calculateFastestRoute(dest: MapboxLocationPoint, currentLocation: LocationData?) {
         val startLat = currentLocation?.latitude ?: (dest.latitude - 0.02)
         val startLon = currentLocation?.longitude ?: (dest.longitude - 0.02)
-        val destLon = dest.longitude
-        val destLat = dest.latitude
-
         try {
-            val token = getMapboxAccessToken()
-            val mapboxUrl = "https://api.mapbox.com/directions/v5/mapbox/driving/$startLon,$startLat;$destLon,$destLat" +
-                    "?overview=full&geometries=geojson&steps=true&banner_instructions=true&access_token=$token"
-
-            var responseText = ""
-            var code = 0
-            var networkUnavailable = false
-            try {
-                val conn = URL(mapboxUrl).openConnection() as HttpURLConnection
-                conn.connectTimeout = 4000
-                conn.readTimeout = 4000
-                code = conn.responseCode
-                if (code == 200) {
-                    responseText = conn.inputStream.bufferedReader().readText()
-                    _uiState.update { it.copy(isOfflineMode = false) }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                networkUnavailable = true
-                _uiState.update { it.copy(isOfflineMode = true) }
-            }
-
-            if (responseText.isBlank() && !networkUnavailable || responseText.isNotBlank() && code != 200) {
-                val fallbackUrl = "https://router.project-osrm.org/route/v1/driving/$startLon,$startLat;$destLon,$destLat?overview=full&geometries=geojson&steps=true"
-                try {
-                    val conn = URL(fallbackUrl).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 4000
-                    conn.readTimeout = 4000
-                    if (conn.responseCode == 200) {
-                        responseText = conn.inputStream.bufferedReader().readText()
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {}
-            }
-
-            if (responseText.isBlank()) {
-                // If online routing is unavailable, ask the Navigation SDK to
-                // build a route from the downloaded routing tiles for this area.
-                // MapboxNavigationProvider is UI-thread owned; requestRoutes is
-                // asynchronous, so it is safe to await from this ViewModel coroutine.
-                val offlineRoute = OfflineRouteEngine.route(
-                    getApplication(),
-                    com.mapbox.geojson.Point.fromLngLat(startLon, startLat),
-                    com.mapbox.geojson.Point.fromLngLat(destLon, destLat)
-                )
-                if (offlineRoute == null) {
-                    withContext(Dispatchers.Main) {
-                        _uiState.update {
-                            it.copy(
-                                routePoints = emptyList(),
-                                etaInfo = null,
-                                nextManeuver = MapboxManeuverInstruction(
-                                    instruction = "Itinéraire hors ligne indisponible. Mettez à jour cette région avec les données routières.",
-                                    iconType = "STRAIGHT",
-                                    distanceMeters = 0.0
-                                ),
-                                routeSteps = emptyList(),
-                                routeStepIndex = 0,
-                                isOfflineMode = true,
-                                isNavigating = true,
-                                isSearching = false
-                            )
-                        }
-                    }
-                    return
-                }
-                val distanceMeters = offlineRoute.distanceMeters.coerceAtLeast(1.0)
-                val durationSeconds = offlineRoute.durationSeconds.coerceAtLeast(60.0)
-                val durationMinutes = (durationSeconds / 60.0).toInt().coerceAtLeast(1)
-                val durationText = if (durationMinutes >= 60) "${durationMinutes / 60}h ${durationMinutes % 60}min" else "$durationMinutes min"
-                val distanceText = if (distanceMeters >= 1000) "%.1f km".format(distanceMeters / 1000.0) else "${distanceMeters.toInt()} m"
-                val arrival = Calendar.getInstance().apply { add(Calendar.SECOND, durationSeconds.toInt()) }
-                val etaTimeText = SimpleDateFormat("HH:mm", Locale.getDefault()).format(arrival.time)
-                val turnSteps = offlineRoute.steps.filterNot { it.iconType.contains("DEPART") }
-                    .ifEmpty { offlineRoute.steps }
+            val route = OfflineRouteEngine.route(
+                getApplication(),
+                com.mapbox.geojson.Point.fromLngLat(startLon, startLat),
+                com.mapbox.geojson.Point.fromLngLat(dest.longitude, dest.latitude)
+            )
+            if (route == null) {
                 withContext(Dispatchers.Main) {
                     _uiState.update {
                         it.copy(
-                            routePoints = offlineRoute.points,
-                            etaInfo = MapboxEtaInfo(durationText, etaTimeText, distanceText),
-                            nextManeuver = turnSteps.firstOrNull() ?: MapboxManeuverInstruction(
-                                instruction = "Suivez la route affichée jusqu’à destination",
-                                iconType = "STRAIGHT",
-                                distanceMeters = distanceMeters
-                            ),
-                            routeSteps = turnSteps,
+                            routePoints = emptyList(),
+                            routeSteps = emptyList(),
                             routeStepIndex = 0,
+                            etaInfo = null,
+                            nextManeuver = MapboxManeuverInstruction(
+                                instruction = "Aucun itinéraire trouvé. Téléchargez les données routières de cette région.",
+                                iconType = "STRAIGHT",
+                                distanceMeters = 0.0
+                            ),
                             isOfflineMode = true,
-                            isNavigating = true,
+                            isNavigating = false,
                             isSearching = false
                         )
                     }
                 }
                 return
             }
-            if (responseText.isNotBlank()) {
-                val json = JSONObject(responseText)
-                val routes = json.optJSONArray("routes")
 
-                if (routes != null && routes.length() > 0) {
-                    val route = routes.getJSONObject(0)
-                    val distanceMeters = route.getDouble("distance")
-                    val durationSeconds = route.getDouble("duration")
-
-                    val durationMin = (durationSeconds / 60.0).toInt()
-                    val durationText = if (durationMin >= 60) "${durationMin / 60}h ${durationMin % 60}min" else "$durationMin min"
-                    val distText = if (distanceMeters >= 1000) "%.1f km".format(distanceMeters / 1000.0) else "${distanceMeters.toInt()} m"
-
-                    val cal = Calendar.getInstance()
-                    cal.add(Calendar.SECOND, durationSeconds.toInt())
-                    val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-                    val etaTimeText = sdf.format(cal.time)
-
-                    val eta = MapboxEtaInfo(durationText = durationText, etaTimeText = etaTimeText, distanceText = distText)
-
-                    val geometry = route.getJSONObject("geometry")
-                    val coordinates = geometry.getJSONArray("coordinates")
-                    val points = mutableListOf<MapboxLocationPoint>()
-                    for (i in 0 until coordinates.length()) {
-                        val coord = coordinates.getJSONArray(i)
-                        points.add(MapboxLocationPoint(coord.getDouble(1), coord.getDouble(0)))
-                    }
-
-                    val legs = route.optJSONArray("legs")
-                    var maneuver: MapboxManeuverInstruction? = null
-                    if (legs != null && legs.length() > 0) {
-                        val steps = legs.getJSONObject(0).optJSONArray("steps")
-                        if (steps != null && steps.length() > 1) {
-                            val nextStep = steps.getJSONObject(1)
-                            val stepManeuver = nextStep.optJSONObject("maneuver")
-                            val type = stepManeuver?.optString("type", "straight") ?: "straight"
-                            val modifier = stepManeuver?.optString("modifier", "") ?: ""
-                            val stepDist = nextStep.optDouble("distance", 0.0)
-
-                            val instructionText = buildManeuverText(type, modifier, stepDist)
-                            maneuver = MapboxManeuverInstruction(
-                                instruction = instructionText,
-                                iconType = type.uppercase(),
-                                distanceMeters = stepDist
-                            )
-                        }
-                    }
-
-                    withContext(Dispatchers.Main) {
-                        _uiState.update {
-                            it.copy(
-                                routePoints = points,
-                                etaInfo = eta,
-                                nextManeuver = maneuver,
-                                isNavigating = true,
-                                isSearching = false
-                            )
-                        }
-                    }
-                    return
+            val durationSeconds = route.durationSeconds.coerceAtLeast(60.0)
+            val durationMinutes = (durationSeconds / 60.0).toInt().coerceAtLeast(1)
+            val durationText = if (durationMinutes >= 60) "${durationMinutes / 60}h ${durationMinutes % 60}min" else "$durationMinutes min"
+            val distanceText = if (route.distanceMeters >= 1000) "%.1f km".format(route.distanceMeters / 1000.0) else "${route.distanceMeters.toInt()} m"
+            val etaTimeText = SimpleDateFormat("HH:mm", Locale.getDefault()).format(
+                Calendar.getInstance().apply { add(Calendar.SECOND, durationSeconds.toInt()) }.time
+            )
+            val maneuvers = route.steps.filterNot { it.iconType.contains("DEPART") }.ifEmpty { route.steps }
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        routePoints = route.points,
+                        routeProgressIndex = 0,
+                        etaInfo = MapboxEtaInfo(durationText, etaTimeText, distanceText),
+                        nextManeuver = maneuvers.firstOrNull(),
+                        routeSteps = maneuvers,
+                        routeStepIndex = 0,
+                        isOfflineMode = route.isOffline,
+                        isNavigating = true,
+                        isSearching = false
+                    )
                 }
             }
-
-            withContext(Dispatchers.Main) { _uiState.update { it.copy(isSearching = false) } }
         } catch (e: CancellationException) {
             throw e
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e("NavigationViewModel", "Route request failed", e)
             withContext(Dispatchers.Main) { _uiState.update { it.copy(isSearching = false) } }
         }
     }
-
     private suspend fun fetchAutofillSuggestions(query: String, loc: LocationData?): List<MapboxPoiResult> {
         val token = getMapboxAccessToken()
         val list = mutableListOf<MapboxPoiResult>()
@@ -894,18 +803,6 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             val nextIndex = currentIndex + 1
             _uiState.update { it.copy(routeStepIndex = nextIndex, nextManeuver = steps[nextIndex]) }
         }
-    }
-
-    private fun computeMinDistanceToRouteMeters(location: LocationData, routePoints: List<MapboxLocationPoint>): Float {
-        var minDistance = Float.MAX_VALUE
-        val locArr = FloatArray(1)
-        for (pt in routePoints) {
-            Location.distanceBetween(location.latitude, location.longitude, pt.latitude, pt.longitude, locArr)
-            if (locArr[0] < minDistance) {
-                minDistance = locArr[0]
-            }
-        }
-        return minDistance
     }
 
     fun dismissBottomSheet() {

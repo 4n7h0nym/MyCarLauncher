@@ -24,21 +24,34 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.openlauncher.app.service.MediaListenerService
+import com.openlauncher.app.data.JancarBluetoothManager
+import com.openlauncher.app.model.NowPlayingState
 import kotlinx.coroutines.delay
 
 @Composable
 fun MediaScreen(
     accent: Color,
+    nowPlayingState: NowPlayingState? = null,
+    mediaPlayerConfigured: Boolean = false,
+    jancarServiceConnected: Boolean = false,
+    onLaunchMediaPlayer: () -> Boolean = { false },
+    onPlayPause: () -> Unit = {},
+    onSkipPrevious: () -> Unit = {},
+    onSkipNext: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val state by MediaListenerService.nowPlaying.collectAsState()
+    val serviceState by MediaListenerService.nowPlaying.collectAsState()
+    val state = nowPlayingState ?: serviceState
+    val jancarError by JancarBluetoothManager.lastError.collectAsState()
     val cardBg     = MaterialTheme.colorScheme.surface
     val cardBorder = MaterialTheme.colorScheme.outline
     val textColor  = MaterialTheme.colorScheme.onBackground
     val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     var positionMs by remember { mutableLongStateOf(0L) }
-    val durationMs = state?.controller?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+    val durationMs = state?.durationMs?.takeIf { it > 0L }
+        ?: state?.controller?.metadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)
+        ?: 0L
 
     LaunchedEffect(state?.isPlaying, state?.title) {
         if (state == null) positionMs = 0L
@@ -46,12 +59,14 @@ fun MediaScreen(
             positionMs = state?.controller?.playbackState?.position ?: positionMs
             delay(500)
         }
+
     }
 
     val title = state?.title?.ifEmpty { null } ?: "Aucune lecture en cours"
     val artist = state?.artist?.ifEmpty { null }.orEmpty()
     val isPlaying = state?.isPlaying == true
     val controller = state?.controller
+    var artworkFailed by remember(state?.artUri, state?.albumArt) { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -86,6 +101,30 @@ fun MediaScreen(
             }
         }
 
+        jancarError?.let { message ->
+            LocalizedLabel(
+                message,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        if (state == null) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                Button(
+                    enabled = mediaPlayerConfigured,
+                    onClick = { onLaunchMediaPlayer() },
+                    colors = ButtonDefaults.buttonColors(containerColor = accent),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Icon(Icons.Default.PlayArrow, null, tint = Color.Black)
+                    Spacer(Modifier.width(8.dp))
+                    LocalizedLabel("Lancer l’application musique Bluetooth", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
         // Main Player Container (Split Left / Right matching reference photo)
         Row(
             modifier = Modifier
@@ -114,12 +153,13 @@ fun MediaScreen(
                         .background(cardBorder.copy(alpha = 0.2f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (state?.albumArt != null || state?.artUri != null) {
+                    if ((state?.albumArt != null || state?.artUri != null) && !artworkFailed) {
                         AsyncImage(
                             model = state?.artUri ?: state?.albumArt,
                             contentDescription = "Album Art",
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
+                            onError = { artworkFailed = true }
                         )
                     } else {
                         Box(
@@ -168,7 +208,7 @@ fun MediaScreen(
                 // Middle Progress Bar & Audio Quality Tag
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Slider(
-                        enabled = state != null,
+                        enabled = controller != null,
                         value = positionMs.toFloat(),
                         onValueChange = { newVal ->
                             positionMs = newVal.toLong()
@@ -212,8 +252,8 @@ fun MediaScreen(
                 ) {
                     // Previous Button
                     Button(
-                        enabled = controller != null,
-                        onClick = { controller?.transportControls?.skipToPrevious() },
+                        enabled = controller != null || state != null || jancarServiceConnected,
+                        onClick = onSkipPrevious,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
                         modifier = Modifier
@@ -225,10 +265,11 @@ fun MediaScreen(
 
                     // Play / Pause Button
                     Button(
-                        enabled = controller != null,
+                        enabled = controller != null || state != null || mediaPlayerConfigured || jancarServiceConnected,
                         onClick = {
-                            if (isPlaying) controller?.transportControls?.pause()
-                            else controller?.transportControls?.play()
+                            if (controller != null && isPlaying) controller.transportControls?.pause()
+                            else if (controller != null) controller.transportControls?.play()
+                            else onPlayPause()
                         },
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent),
@@ -246,8 +287,8 @@ fun MediaScreen(
 
                     // Next Button
                     Button(
-                        enabled = controller != null,
-                        onClick = { controller?.transportControls?.skipToNext() },
+                        enabled = controller != null || state != null || jancarServiceConnected,
+                        onClick = onSkipNext,
                         shape = RoundedCornerShape(28.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = accent.copy(alpha = 0.3f)),
                         modifier = Modifier

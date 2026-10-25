@@ -118,6 +118,7 @@ dependencies {
     // Route generation also works without a network connection when routing
     // tiles are included in the downloaded TileStore regions.
     implementation("com.mapbox.navigationcore:navigation-ndk27:3.11.0")
+    implementation("com.mapbox.navigationcore:ui-maps-ndk27:3.11.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -3,6 +3,9 @@ package com.openlauncher.app.ui.screen
 import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
 
 import android.Manifest
+import android.graphics.Color as AndroidColor
+import android.location.Location
+import android.speech.tts.TextToSpeech
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -49,7 +53,12 @@ import com.mapbox.maps.Style
 import com.mapbox.maps.RenderedQueryGeometry
 import com.mapbox.maps.RenderedQueryOptions
 import com.mapbox.maps.extension.style.expressions.generated.Expression
+import com.mapbox.maps.extension.style.expressions.generated.Expression.Companion.eq
+import com.mapbox.maps.extension.style.expressions.generated.Expression.Companion.get
+import com.mapbox.maps.extension.style.expressions.generated.Expression.Companion.literal
 import com.mapbox.maps.extension.style.layers.addLayer
+import com.mapbox.maps.extension.style.layers.addLayerBelow
+import com.mapbox.maps.extension.style.layers.generated.FillExtrusionLayer
 import com.mapbox.maps.extension.style.layers.generated.SymbolLayer
 import com.mapbox.maps.extension.style.layers.properties.generated.TextAnchor
 import com.mapbox.maps.plugin.annotation.annotations
@@ -60,6 +69,14 @@ import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.plugin.animation.camera
+import com.mapbox.maps.plugin.PuckBearing
+import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
+import com.mapbox.common.location.toCommonLocation
+import com.mapbox.navigation.ui.maps.camera.NavigationCamera
+import com.mapbox.navigation.ui.maps.camera.data.MapboxNavigationViewportDataSource
+import com.mapbox.navigation.ui.maps.location.NavigationLocationProvider
+import com.openlauncher.app.data.OfflineRouteEngine
 import com.openlauncher.app.data.AppSettings
 import com.openlauncher.app.data.DayNightMode
 import com.openlauncher.app.data.MapThemeMode
@@ -72,6 +89,7 @@ import com.mapbox.maps.plugin.gestures.OnMoveListener
 import com.mapbox.android.gestures.MoveGestureDetector
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalPermissionsApi::class)
 @Composable
@@ -86,6 +104,7 @@ fun NavigationScreen(
     modifier: Modifier = Modifier
 ) {
     val uiState by navViewModel.uiState.collectAsState()
+    var mapLoadError by remember { mutableStateOf<String?>(null) }
     val cardBg     = MaterialTheme.colorScheme.surface
     val cardBorder = MaterialTheme.colorScheme.outline
     val textColor  = MaterialTheme.colorScheme.onBackground
@@ -99,6 +118,64 @@ fun NavigationScreen(
     }
     val focusManager = LocalFocusManager.current
     var searchPanelBounds by remember { mutableStateOf<Rect?>(null) }
+    val context = LocalContext.current
+    var voiceGuidanceEnabled by rememberSaveable { mutableStateOf(true) }
+    var ttsReady by remember { mutableStateOf(false) }
+    val localTts = remember(context) {
+        val engineRef = java.util.concurrent.atomic.AtomicReference<TextToSpeech?>()
+        val engine = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                engineRef.get()?.let { readyEngine ->
+                    val canadianFrench = readyEngine.setLanguage(Locale.CANADA_FRENCH)
+                    if (canadianFrench == TextToSpeech.LANG_MISSING_DATA || canadianFrench == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        val french = readyEngine.setLanguage(Locale.FRANCE)
+                        ttsReady = french != TextToSpeech.LANG_MISSING_DATA && french != TextToSpeech.LANG_NOT_SUPPORTED
+                    } else {
+                        ttsReady = true
+                    }
+                }
+            }
+        }
+        engineRef.set(engine)
+        engine
+    }
+    var spokenManeuverIndex by remember { mutableIntStateOf(-1) }
+
+    DisposableEffect(localTts) {
+        onDispose {
+            localTts.stop()
+            localTts.shutdown()
+        }
+    }
+
+    // Android's installed speech engine reads the already-computed maneuver text locally.
+    // Trigger once when a turn is within roughly 200 m; no Mapbox Voice API is called.
+    LaunchedEffect(
+        uiState.isNavigating,
+        voiceGuidanceEnabled,
+        ttsReady,
+        uiState.routeStepIndex,
+        uiState.nextManeuver?.instruction,
+        location?.latitude,
+        location?.longitude
+    ) {
+        val maneuver = uiState.nextManeuver ?: return@LaunchedEffect
+        if (!uiState.isNavigating || !voiceGuidanceEnabled || !ttsReady || spokenManeuverIndex == uiState.routeStepIndex) {
+            return@LaunchedEffect
+        }
+        val point = maneuver.maneuverPoint ?: return@LaunchedEffect
+        val current = location ?: return@LaunchedEffect
+        val distance = FloatArray(1)
+        Location.distanceBetween(current.latitude, current.longitude, point.latitude, point.longitude, distance)
+        if (distance[0] <= 250f) {
+            val distanceText = if (distance[0] < 1000f) "Dans ${distance[0].roundToInt()} mètres, " else ""
+            localTts.speak("$distanceText${maneuver.instruction}", TextToSpeech.QUEUE_FLUSH, null, "maneuver-${uiState.routeStepIndex}")
+            spokenManeuverIndex = uiState.routeStepIndex
+        }
+    }
+    LaunchedEffect(uiState.selectedDestination?.id) {
+        spokenManeuverIndex = -1
+    }
 
     // Permissions GPS
     val locationPermissionState = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -144,7 +221,8 @@ fun NavigationScreen(
             location = location,
             bearing = bearing,
             destinationPoint = uiState.selectedDestination?.point,
-            routePoints = uiState.routePoints,
+            routePoints = if (uiState.routeProgressIndex in 1 until uiState.routePoints.size)
+                uiState.routePoints.drop(uiState.routeProgressIndex) else uiState.routePoints,
             isDayMode = isMapLightMode,
             isSplitSearchOpen = uiState.isSplitSearchOpen,
             triggerRecenter = uiState.triggerRecenter,
@@ -152,8 +230,48 @@ fun NavigationScreen(
             savedPlaces = uiState.savedPlaces,
             onMapPoiSelected = { navViewModel.selectMapPoi(it) },
             onMapTapped = { navViewModel.clearMapPoiSelection() },
+            onMapLoadError = { mapLoadError = it },
             modifier = Modifier.fillMaxSize()
         )
+
+        mapLoadError?.let { error ->
+            Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(16.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LocalizedLabel("La carte Mapbox n’a pas pu charger son style.", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold)
+                    LocalizedLabel(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 11.sp, maxLines = 3)
+                    LocalizedLabel("Vérifiez l’accès réseau et la configuration du jeton Mapbox du build installé.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 11.sp)
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = uiState.isNavigating,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 20.dp, bottom = 24.dp)
+        ) {
+            FilledTonalIconButton(
+                onClick = {
+                    voiceGuidanceEnabled = !voiceGuidanceEnabled
+                    if (!voiceGuidanceEnabled) localTts.stop()
+                },
+                modifier = Modifier.size(56.dp),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = if (voiceGuidanceEnabled) accent else MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
+                    contentColor = if (voiceGuidanceEnabled) Color.White else MaterialTheme.colorScheme.onSurface
+                )
+            ) {
+                Icon(
+                    if (voiceGuidanceEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                    contentDescription = if (voiceGuidanceEnabled) "Désactiver le guidage vocal" else "Activer le guidage vocal",
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+        }
 
         // Compact speed HUD layered over the map so the map remains full-screen.
         val metricUnits = settings.unitSystem == UnitSystem.METRIC
@@ -1089,17 +1207,24 @@ private fun MapboxFullInteractiveMap(
     savedPlaces: List<SavedPlace>,
     onMapPoiSelected: (MapboxPoiResult) -> Unit,
     onMapTapped: () -> Unit,
+    onMapLoadError: (String?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var isFollowingGps by remember { mutableStateOf(true) }
+    var viewportDataSource by remember { mutableStateOf<MapboxNavigationViewportDataSource?>(null) }
+    var navigationCamera by remember { mutableStateOf<NavigationCamera?>(null) }
+    val navigationLocationProvider = remember { NavigationLocationProvider() }
+    val activeNavigationRoute by OfflineRouteEngine.activeRoute.collectAsState()
 
     // Managers d'annotations uniques et persistants
     var polylineManager by remember { mutableStateOf<PolylineAnnotationManager?>(null) }
     var pointManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
     var savedPlaceManager by remember { mutableStateOf<PointAnnotationManager?>(null) }
+    var mapErrorSubscription by remember { mutableStateOf<com.mapbox.common.Cancelable?>(null) }
     val latestSavedPlaces = rememberUpdatedState(savedPlaces)
     val latestPoiCallback = rememberUpdatedState(onMapPoiSelected)
     val latestMapTappedCallback = rememberUpdatedState(onMapTapped)
+    val latestMapErrorCallback = rememberUpdatedState(onMapLoadError)
 
     val context = LocalContext.current
     val mapView = remember {
@@ -1107,6 +1232,10 @@ private fun MapboxFullInteractiveMap(
         // Reuse the existing Gradle-provided resource; do not duplicate the token.
         MapboxOptions.accessToken = context.getString(com.openlauncher.app.R.string.mapbox_access_token)
         MapView(context).apply {
+            this.location.setLocationProvider(navigationLocationProvider)
+            mapErrorSubscription = mapboxMap.subscribeMapLoadingError { error ->
+                latestMapErrorCallback.value("${error.type}: ${error.message}")
+            }
             gestures.addOnMoveListener(object : OnMoveListener {
                 override fun onMoveBegin(detector: MoveGestureDetector) {
                     isFollowingGps = false
@@ -1156,16 +1285,65 @@ private fun MapboxFullInteractiveMap(
 
     DisposableEffect(mapView) {
         mapView.onStart()
+        OfflineRouteEngine.attachMap(navigationLocationProvider) { matcherResult ->
+            viewportDataSource?.onLocationChanged(matcherResult.enhancedLocation)
+            viewportDataSource?.evaluate()
+            if (isFollowingGps) navigationCamera?.requestNavigationCameraToFollowing()
+        }
         onDispose {
+            OfflineRouteEngine.detachMap(navigationLocationProvider)
+            mapErrorSubscription?.cancel()
             mapView.onStop()
             mapView.onDestroy()
         }
     }
 
+    LaunchedEffect(location, routePoints.isNotEmpty()) {
+        // Before a trip session starts, keep the normal GPS dot alive through the same provider.
+        // During guidance, the SDK's matched locations replace these raw fixes.
+        if (routePoints.isEmpty() && location != null) {
+            val rawFix = Location("launcher").apply {
+                latitude = location.latitude
+                longitude = location.longitude
+                accuracy = location.accuracy
+                speed = location.speedMps
+                setBearing(bearing)
+                time = System.currentTimeMillis()
+            }
+            navigationLocationProvider.changePosition(rawFix.toCommonLocation())
+        }
+    }
+
+    LaunchedEffect(activeNavigationRoute, viewportDataSource) {
+        activeNavigationRoute?.let { route ->
+            viewportDataSource?.onRouteChanged(route)
+            viewportDataSource?.evaluate()
+            navigationCamera?.requestNavigationCameraToFollowing()
+        }
+    }
+
     // Mettre à jour le style si le mode jour/nuit change
     LaunchedEffect(isDayMode) {
+        onMapLoadError(null)
         val mapboxStyle = if (isDayMode) Style.MAPBOX_STREETS else Style.DARK
         mapView.mapboxMap.loadStyle(mapboxStyle) { style ->
+            onMapLoadError(null)
+            // The Streets vector source includes building footprints and
+            // heights. Extrude them at city zooms, while keeping road labels
+            // above the buildings for a readable driving map.
+            if (style.styleSourceExists("composite") && !style.styleLayerExists("navigation-3d-buildings")) {
+                val buildings = FillExtrusionLayer("navigation-3d-buildings", "composite").apply {
+                    sourceLayer("building")
+                    filter(eq(get("extrude"), literal("true")))
+                    minZoom(15.0)
+                    fillExtrusionColor(AndroidColor.parseColor(if (isDayMode) "#B8C6D2" else "#526170"))
+                    fillExtrusionHeight(get("height"))
+                    fillExtrusionBase(get("min_height"))
+                    fillExtrusionOpacity(0.88)
+                }
+                if (style.styleLayerExists("road-label")) style.addLayerBelow(buildings, "road-label")
+                else style.addLayer(buildings)
+            }
             // Add explicit labels from Mapbox Streets vector tiles. The offline tile packs
             // contain these same tiles, so the labels work online and offline.
             if (style.styleSourceExists("composite") && !style.styleLayerExists("offline-poi-labels")) {
@@ -1187,15 +1365,67 @@ private fun MapboxFullInteractiveMap(
             }
             mapView.location.updateSettings {
                 enabled = true
-                pulsingEnabled = true
+                pulsingEnabled = routePoints.isEmpty()
+            }
+        }
+    }
+
+    LaunchedEffect(mapView) {
+        val source = MapboxNavigationViewportDataSource(mapView.mapboxMap)
+        val density = context.resources.displayMetrics.density
+        source.followingPadding = EdgeInsets(
+            175.0 * density,
+            36.0 * density,
+            150.0 * density,
+            36.0 * density
+        )
+        viewportDataSource = source
+        navigationCamera = NavigationCamera(mapView.mapboxMap, mapView.camera, source)
+    }
+
+    // In guidance, use a course-oriented arrow like a turn-by-turn map. In map
+    // browsing, retain the familiar pulsing blue location dot.
+    LaunchedEffect(routePoints.isNotEmpty()) {
+        mapView.location.apply {
+            puckBearing = PuckBearing.COURSE
+            updateSettings {
+                enabled = true
+                puckBearingEnabled = routePoints.isNotEmpty()
+                pulsingEnabled = routePoints.isEmpty()
+                locationPuck = createDefault2DPuck(withBearing = routePoints.isNotEmpty())
             }
         }
     }
 
     // Lorsque l'utilisateur clique sur le bouton Recenter, on réactive immédiatement le suivi GPS
-    LaunchedEffect(triggerRecenter) {
+    LaunchedEffect(triggerRecenter, navigationCamera, viewportDataSource) {
         if (triggerRecenter > 0L) {
             isFollowingGps = true
+            val matchedLocation = navigationLocationProvider.lastLocation
+            if (routePoints.size > 1 && matchedLocation != null) {
+                viewportDataSource?.onLocationChanged(matchedLocation)
+                viewportDataSource?.evaluate()
+                val guidancePadding = EdgeInsets(mapView.height * 0.38, 0.0, 0.0, 0.0)
+                mapView.mapboxMap.setCamera(
+                    CameraOptions.Builder()
+                        .center(Point.fromLngLat(matchedLocation.longitude, matchedLocation.latitude))
+                        .zoom(17.2)
+                        .bearing(matchedLocation.bearing ?: bearing.toDouble())
+                        .pitch(55.0)
+                        .padding(guidancePadding)
+                        .build()
+                )
+            } else if (location != null) {
+                mapView.mapboxMap.setCamera(
+                    CameraOptions.Builder()
+                        .center(Point.fromLngLat(location.longitude, location.latitude))
+                        .zoom(if (routePoints.size > 1) 17.2 else 15.5)
+                        .bearing(if (routePoints.size > 1) bearing.toDouble() else 0.0)
+                        .pitch(if (routePoints.size > 1) 55.0 else 0.0)
+                        .build()
+                )
+            }
+            if (routePoints.size > 1) navigationCamera?.requestNavigationCameraToFollowing()
         }
     }
 
@@ -1206,16 +1436,20 @@ private fun MapboxFullInteractiveMap(
             val mapboxMap = mv.mapboxMap
 
             val leftPadding = if (isSplitSearchOpen) mv.width / 2.0 else 0.0
-            val edgeInsets = EdgeInsets(0.0, leftPadding, 0.0, 0.0)
+            val isGuidanceActive = routePoints.size > 1
+            // Top padding shifts the followed location down on screen, leaving
+            // more room to see the road ahead, as in dedicated navigation apps.
+            val topPadding = if (isGuidanceActive) mv.height * 0.38 else 0.0
+            val edgeInsets = EdgeInsets(topPadding, leftPadding, 0.0, 0.0)
 
             // 1. Suivi GPS en temps réel & Orientation vers le haut (Course-Up avec Pitch 3D)
-            if (location != null && (isFollowingGps || triggerRecenter > 0L)) {
-                val zoomLevel = if (routePoints.isNotEmpty()) 16.5 else 15.5
+            if (!isGuidanceActive && location != null && (isFollowingGps || triggerRecenter > 0L)) {
+                val zoomLevel = if (isGuidanceActive) 17.2 else 15.5
                 val cameraOptions = CameraOptions.Builder()
                     .center(Point.fromLngLat(location.longitude, location.latitude))
                     .zoom(zoomLevel)
-                    .bearing(bearing.toDouble()) // La rotation suit le cap pour orienter le tracé vers le HAUT
-                    .pitch(40.0)                  // Inclinaison 3D pour la vue de conduite
+                    .bearing(if (isGuidanceActive) bearing.toDouble() else 0.0)
+                    .pitch(if (isGuidanceActive) 55.0 else 0.0)
                     .padding(edgeInsets)
                     .build()
                 mapboxMap.setCamera(cameraOptions)
@@ -1226,10 +1460,16 @@ private fun MapboxFullInteractiveMap(
                 pm.deleteAll()
                 if (routePoints.isNotEmpty()) {
                     val points = routePoints.map { Point.fromLngLat(it.longitude, it.latitude) }
+                    pm.create(
+                        PolylineAnnotationOptions()
+                            .withPoints(points)
+                            .withLineColor(if (isDayMode) "#FFFFFF" else "#171A1F")
+                            .withLineWidth(10.0)
+                    )
                     val polylineOptions = PolylineAnnotationOptions()
                         .withPoints(points)
-                        .withLineColor("#0080FF")
-                        .withLineWidth(6.0)
+                        .withLineColor("#4285F4")
+                        .withLineWidth(7.0)
                     pm.create(polylineOptions)
                 }
             }

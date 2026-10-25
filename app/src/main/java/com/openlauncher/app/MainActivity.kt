@@ -2,7 +2,9 @@ package com.openlauncher.app
 
 import android.Manifest
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.telecom.TelecomManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -19,17 +21,26 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.mapbox.common.MapboxOptions
 import com.openlauncher.app.data.OfflineRegionManager
 import com.openlauncher.app.data.BluetoothContactsRepository
+import com.openlauncher.app.data.JancarBluetoothManager
+import com.openlauncher.app.data.JancarKeyReceiver
 import com.openlauncher.app.data.DayNightMode
 import com.openlauncher.app.data.SidebarPosition
 import com.openlauncher.app.data.GradientDirection
@@ -55,6 +66,10 @@ class MainActivity : ComponentActivity() {
     private val vm: LauncherViewModel by viewModels()
     private val navVm: NavigationViewModel by viewModels()
     private lateinit var speech: TextToSpeechManager
+    private val jancarKeyReceiver = JancarKeyReceiver { keyId, eventType ->
+        vm.handleJancarKey(keyId, eventType)
+    }
+    private var jancarKeyReceiverRegistered = false
 
     private val callPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         val number = pendingCallNumber
@@ -65,6 +80,7 @@ class MainActivity : ComponentActivity() {
     private fun currentVoiceLanguage(): String = vm.settings.value.appLanguage.tag
 
     private fun placeCall(number: String) {
+        if (JancarBluetoothManager.callPhone(number)) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
             pendingCallNumber = number
             callPermission.launch(Manifest.permission.CALL_PHONE)
@@ -73,7 +89,13 @@ class MainActivity : ComponentActivity() {
 
     private fun dial(number: String) {
         runCatching {
-            startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null)))
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                getSystemService(TelecomManager::class.java)
+                    ?.placeCall(Uri.fromParts("tel", number, null), Bundle())
+                    ?: startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null)))
+            } else {
+                startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null)))
+            }
         }.onFailure {
             startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)))
         }
@@ -120,6 +142,7 @@ class MainActivity : ComponentActivity() {
             val apps        by vm.apps.collectAsStateWithLifecycle()
             val appsLoading by vm.appsLoading.collectAsStateWithLifecycle()
             val nowPlaying  by vm.nowPlaying.collectAsStateWithLifecycle()
+            val jancarServiceConnected by JancarBluetoothManager.isBound.collectAsStateWithLifecycle()
             val navigationState by navVm.uiState.collectAsStateWithLifecycle()
             val weather     by vm.weather.collectAsStateWithLifecycle()
             val location    by vm.location.collectAsStateWithLifecycle()
@@ -134,6 +157,8 @@ class MainActivity : ComponentActivity() {
             val appPickerTarget by vm.appPickerTarget.collectAsStateWithLifecycle()
             val incomingMessage by MediaListenerService.incomingMessage.collectAsStateWithLifecycle()
             var voiceAssistantOpen by remember { mutableStateOf(false) }
+            var voiceAssistantListening by remember { mutableStateOf(false) }
+            var voiceAssistantTranscript by remember { mutableStateOf("") }
             LaunchedEffect(Unit) {
                 vm.triggerVoiceAssistant.collect {
                     voiceAssistantOpen = true
@@ -327,6 +352,7 @@ class MainActivity : ComponentActivity() {
                                             com.openlauncher.app.viewmodel.LauncherViewModel.AppPickerTarget.ANDROID_AUTO -> "CHOOSE ANDROID AUTO APP"
                                             com.openlauncher.app.viewmodel.LauncherViewModel.AppPickerTarget.PIP          -> "CHOOSE PIP APP"
                                             com.openlauncher.app.viewmodel.LauncherViewModel.AppPickerTarget.RADIO        -> "CHOOSE RADIO APP"
+                                            com.openlauncher.app.viewmodel.LauncherViewModel.AppPickerTarget.MEDIA        -> "CHOOSE MUSIC APP"
                                             else -> "CHOOSE CARPLAY APP"
                                         },
                                         accent              = accent,
@@ -339,7 +365,8 @@ class MainActivity : ComponentActivity() {
                                         settings = settings,
                                         accent   = accent,
                                         onUpdate = { block -> vm.updateSettings(block) },
-                                        onReset  = { vm.resetSettings() }
+                                        onReset  = { vm.resetSettings() },
+                                        onAssignMediaPlayer = { vm.startMediaPlayerPicker() }
                                     )
 
                                     NavDestination.RADIO -> RadioScreen(
@@ -356,7 +383,14 @@ class MainActivity : ComponentActivity() {
                                     )
 
                                     NavDestination.MEDIA -> MediaScreen(
-                                        accent   = accent,
+                                        accent = accent,
+                                        nowPlayingState = nowPlaying,
+                                        mediaPlayerConfigured = settings.mediaPlayerPackage.isNotBlank(),
+                                        jancarServiceConnected = jancarServiceConnected,
+                                        onLaunchMediaPlayer = vm::launchMediaPlayer,
+                                        onPlayPause = vm::playPause,
+                                        onSkipPrevious = vm::skipPrev,
+                                        onSkipNext = vm::skipNext,
                                         modifier = Modifier.fillMaxSize()
                                     )
 
@@ -396,7 +430,14 @@ class MainActivity : ComponentActivity() {
                                 mainPane(Modifier.weight(1f).fillMaxWidth())
                                 androidx.compose.material3.HorizontalDivider(color = layoutDivColor)
                                 Box(modifier = Modifier.zIndex(10f)) {
-                                    sidebarContent()
+                                    if (voiceAssistantListening) {
+                                        VoiceListeningBar(
+                                            transcript = voiceAssistantTranscript,
+                                            languageTag = settings.appLanguage.tag,
+                                            accent = accent,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                    } else sidebarContent()
                                 }
                             }
                         } else {
@@ -421,6 +462,14 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                            if (voiceAssistantListening && !isBottomBar) {
+                                VoiceListeningBar(
+                                    transcript = voiceAssistantTranscript,
+                                    languageTag = settings.appLanguage.tag,
+                                    accent = accent,
+                                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().zIndex(11f)
+                                )
+                            }
                         }
                     }
                 }
@@ -428,7 +477,13 @@ class MainActivity : ComponentActivity() {
                     VoiceAssistantDialog(
                         accent = accent,
                         languageTag = settings.appLanguage.tag,
-                        onDismiss = { voiceAssistantOpen = false },
+                        onDismiss = {
+                            voiceAssistantOpen = false
+                            voiceAssistantListening = false
+                            voiceAssistantTranscript = ""
+                        },
+                        onTranscriptChange = { voiceAssistantTranscript = it },
+                        onListeningChange = { voiceAssistantListening = it },
                         onCommand = { raw ->
                             val command = normalizeVoiceText(raw)
                             val currentLocation = location
@@ -450,17 +505,25 @@ class MainActivity : ComponentActivity() {
                                 Regex("^(appelle|appeler|compose|telephone a|call|phone) ").containsMatchIn(command) -> {
                                     val name = command.replace(Regex("^(appelle|appeler|compose|telephone a|call|phone)\\s*"), "").trim()
                                     lifecycleScope.launch {
-                                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
-                                            speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Allow Bluetooth contacts on the Phone page before using voice calling." else "Autorisez les contacts Bluetooth dans la page Téléphone avant d’utiliser l’appel vocal.")
-                                            vm.navigate(NavDestination.PHONE)
-                                        } else {
-                                            val matches = withContext(Dispatchers.IO) { BluetoothContactsRepository.load(this@MainActivity) }
-                                                .filter { normalizeVoiceText(it.name).contains(name) }
-                                            when (matches.size) {
-                                                1 -> { speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Calling ${matches.first().name}." else "Appel de ${matches.first().name} en cours."); placeCall(matches.first().phoneNumber) }
-                                                0 -> speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "No matching Bluetooth contact for $name." else "Aucun contact Bluetooth correspondant à $name.")
-                                                else -> { vm.navigate(NavDestination.PHONE); speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "More than one contact matches. Choose the right contact on screen." else "Plusieurs contacts correspondent. Choisissez le bon contact à l’écran.") }
-                                            }
+                                        val localContactsAllowed = ContextCompat.checkSelfPermission(
+                                            this@MainActivity, Manifest.permission.READ_CONTACTS
+                                        ) == PackageManager.PERMISSION_GRANTED
+                                        val contacts = JancarBluetoothManager.contacts.value + if (localContactsAllowed) {
+                                            withContext(Dispatchers.IO) { BluetoothContactsRepository.load(this@MainActivity) }
+                                        } else emptyList()
+                                        val uniqueContacts = contacts.distinctBy { BluetoothContactsRepository.phoneKey(it.phoneNumber) }
+                                        val exactMatches = uniqueContacts.filter { normalizeVoiceText(it.name) == name }
+                                        val matches = if (exactMatches.isNotEmpty()) exactMatches else uniqueContacts.filter {
+                                            val contactName = normalizeVoiceText(it.name)
+                                            name.length >= 2 && contactName.contains(name)
+                                        }
+                                        when (matches.size) {
+                                            1 -> { speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Calling ${matches.first().name}." else "Appel de ${matches.first().name} en cours."); placeCall(matches.first().phoneNumber) }
+                                            0 -> if (!localContactsAllowed && JancarBluetoothManager.contacts.value.isEmpty()) {
+                                                speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Allow Bluetooth contacts on the Phone page before using voice calling." else "Autorisez les contacts Bluetooth dans la page Téléphone avant d’utiliser l’appel vocal.")
+                                                vm.navigate(NavDestination.PHONE)
+                                            } else speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "No matching Bluetooth contact for $name." else "Aucun contact Bluetooth correspondant à $name.")
+                                            else -> { vm.navigate(NavDestination.PHONE); speech.speak(if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "More than one contact matches. Choose the right contact on screen." else "Plusieurs contacts correspondent. Choisissez le bon contact à l’écran.") }
                                         }
                                     }
                                     if (settings.appLanguage == AppLanguage.ENGLISH_CANADA) "Searching for contact $name." else "Je cherche le contact $name."
@@ -488,11 +551,38 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        registerJancarKeyReceiver()
         vm.refreshConnectivity()
         vm.refreshMedia()
     }
 
+    override fun onPause() {
+        unregisterJancarKeyReceiver()
+        super.onPause()
+    }
+
+    private fun registerJancarKeyReceiver() {
+        if (jancarKeyReceiverRegistered) return
+        val filter = IntentFilter(JancarKeyReceiver.ACTION_KEY_EVENT)
+        runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                jancarKeyReceiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            jancarKeyReceiverRegistered = true
+        }
+    }
+
+    private fun unregisterJancarKeyReceiver() {
+        if (!jancarKeyReceiverRegistered) return
+        runCatching { unregisterReceiver(jancarKeyReceiver) }
+        jancarKeyReceiverRegistered = false
+    }
+
     override fun onDestroy() {
+        JancarBluetoothManager.disconnect()
         speech.close()
         super.onDestroy()
     }
@@ -504,6 +594,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        JancarBluetoothManager.connect(this)
         vm.startLocationUpdates()
     }
 
@@ -530,5 +621,30 @@ class MainActivity : ComponentActivity() {
     override fun onKeyLongPress(keyCode: Int, event: android.view.KeyEvent?): Boolean {
         if (vm.handleSteeringKey(keyCode, isLongPress = true)) return true
         return super.onKeyLongPress(keyCode, event)
+    }
+}
+
+@Composable
+private fun VoiceListeningBar(
+    transcript: String,
+    languageTag: String,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .height(54.dp)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
+            .padding(horizontal = 20.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Icon(Icons.Default.Mic, contentDescription = null, tint = accent, modifier = Modifier.size(26.dp))
+        Text(
+            text = transcript.ifBlank { if (languageTag.startsWith("en")) "Listening…" else "Je vous écoute…" },
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1
+        )
     }
 }

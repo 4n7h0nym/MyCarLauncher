@@ -11,6 +11,10 @@ class VoiceAssistantManager(context: Context) {
     private val appContext = context.applicationContext
     private var recognizer: SpeechRecognizer? = null
 
+    fun isServiceAvailable(): Boolean = runCatching {
+        SpeechRecognizer.isRecognitionAvailable(appContext)
+    }.getOrDefault(false)
+
     fun listen(
         languageTag: String = "fr-CA",
         onPartial: (String) -> Unit,
@@ -18,11 +22,15 @@ class VoiceAssistantManager(context: Context) {
         onFailure: (String) -> Unit
     ) {
         stop()
-        if (!SpeechRecognizer.isRecognitionAvailable(appContext)) {
+        if (!isServiceAvailable()) {
             onFailure(if (languageTag.startsWith("en")) "Speech recognition is not available on this device." else "La reconnaissance vocale n’est pas disponible sur cet appareil.")
             return
         }
-        val speechRecognizer = SpeechRecognizer.createSpeechRecognizer(appContext)
+        val speechRecognizer = runCatching { SpeechRecognizer.createSpeechRecognizer(appContext) }
+            .getOrElse {
+                onFailure(if (languageTag.startsWith("en")) "Unable to open the speech service." else "Impossible d’ouvrir le service de reconnaissance vocale.")
+                return
+            }
         recognizer = speechRecognizer
         speechRecognizer.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) = Unit

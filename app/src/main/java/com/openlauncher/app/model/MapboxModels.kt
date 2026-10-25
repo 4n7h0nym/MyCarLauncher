@@ -74,6 +74,7 @@ data class NavigationUiState(
     // Trajet et guidage actif (État B)
     val selectedDestination: MapboxPoiResult? = null,
     val routePoints: List<MapboxLocationPoint> = emptyList(),
+    val routeProgressIndex: Int = 0,
     val nextManeuver: MapboxManeuverInstruction? = null,
     val routeSteps: List<MapboxManeuverInstruction> = emptyList(),
     val routeStepIndex: Int = 0,

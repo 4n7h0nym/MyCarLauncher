@@ -55,6 +55,7 @@ fun SettingsScreen(
     accent: Color,
     onUpdate: (AppSettings.() -> AppSettings) -> Unit,
     onReset: () -> Unit,
+    onAssignMediaPlayer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -179,6 +180,21 @@ fun SettingsScreen(
                         label = { LocalizedLabel(language.label) },
                         leadingIcon = if (settings.appLanguage == language) ({ Icon(Icons.Default.Check, null) }) else null
                     )
+                }
+            }
+        }
+
+        SettingsSection("Lecteur multimédia Bluetooth") {
+            SettingsButton(
+                label = if (settings.mediaPlayerPackage.isBlank()) "Choisir l’application musique de l’autoradio" else "Modifier l’application musique de l’autoradio",
+                sublabel = settings.mediaPlayerPackage.ifBlank { "À utiliser lorsque le lecteur Bluetooth n’a pas encore créé de session média" },
+                icon = Icons.Default.MusicNote,
+                accent = accent,
+                onClick = onAssignMediaPlayer
+            )
+            if (settings.mediaPlayerPackage.isNotBlank()) {
+                TextButton(onClick = { onUpdate { copy(mediaPlayerPackage = "") } }) {
+                    LocalizedLabel("Dissocier l’application musique", color = MaterialTheme.colorScheme.error)
                 }
             }
         }

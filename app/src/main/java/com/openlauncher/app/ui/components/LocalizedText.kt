@@ -22,6 +22,8 @@ val LocalAppLanguage = androidx.compose.runtime.staticCompositionLocalOf { AppLa
 
 private val translationPairs = mapOf(
     "Introduction" to "Introduction", "Language" to "Langue", "Get started" to "Commencer",
+    "Home" to "Accueil", "Phone" to "Téléphone", "Radio" to "Radio", "Media" to "Médias",
+    "Nav" to "Carte", "Offline" to "Hors ligne",
     "WELCOME TO OPEN LAUNCHER" to "BIENVENUE DANS OPEN LAUNCHER",
     "A clean, modern landscape dashboard designed to be the ultimate companion for your car's screen." to "Un tableau de bord clair et personnalisable, conçu pour accompagner vos trajets en voiture.",
     "Designed for the dashboard" to "Conçu pour le tableau de bord",

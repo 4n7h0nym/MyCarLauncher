@@ -4,8 +4,11 @@ import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -38,6 +41,8 @@ fun VoiceAssistantDialog(
     accent: Color,
     languageTag: String,
     onCommand: (String) -> String,
+    onTranscriptChange: (String) -> Unit = {},
+    onListeningChange: (Boolean) -> Unit = {},
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -54,6 +59,20 @@ fun VoiceAssistantDialog(
             if (granted) "Tap the microphone again to speak" else "Microphone access was denied."
         } else if (granted) "Touchez encore le micro pour parler" else "L’accès au microphone a été refusé."
     }
+    val fallbackRecognizer = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val phrase = if (result.resultCode == android.app.Activity.RESULT_OK) {
+            result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+        } else null
+        listening = false
+        onListeningChange(false)
+        if (!phrase.isNullOrBlank()) {
+            transcript = phrase
+            onTranscriptChange(phrase)
+            status = onCommand(phrase)
+        } else {
+            status = if (languageTag.startsWith("en")) "No voice command was returned." else "Aucune commande vocale reçue."
+        }
+    }
     val pulse by rememberInfiniteTransition(label = "voice-pulse").animateFloat(
         initialValue = 1f,
         targetValue = if (listening) 1.12f else 1f,
@@ -67,24 +86,45 @@ fun VoiceAssistantDialog(
             return
         }
         transcript = ""
+        onTranscriptChange("")
         status = if (languageTag.startsWith("en")) "I'm listening…" else "Je vous écoute…"
         listening = true
+        onListeningChange(true)
+        if (!manager.isServiceAvailable()) {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            }
+            runCatching { fallbackRecognizer.launch(intent) }
+                .onFailure {
+                    listening = false
+                    onListeningChange(false)
+                    status = if (languageTag.startsWith("en")) "No speech recognition app is installed." else "Aucune application de reconnaissance vocale n’est installée."
+                }
+            return
+        }
         manager.listen(
             languageTag = languageTag,
-            onPartial = { transcript = it },
+            onPartial = { transcript = it; onTranscriptChange(it) },
             onFinal = { result ->
                 transcript = result
+                onTranscriptChange(result)
                 listening = false
+                onListeningChange(false)
                 status = onCommand(result)
             },
             onFailure = {
                 listening = false
+                onListeningChange(false)
                 status = it
             }
         )
     }
 
-    DisposableEffect(manager) { onDispose { manager.close() } }
+    DisposableEffect(manager) { onDispose { manager.close(); onListeningChange(false) } }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 12.dp) {

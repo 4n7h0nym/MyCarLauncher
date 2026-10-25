@@ -23,6 +23,7 @@ import com.openlauncher.app.data.DayNightMode
 import com.openlauncher.app.data.GRID_COLS
 import com.openlauncher.app.data.GRID_ROWS
 import com.openlauncher.app.data.SettingsRepository
+import com.openlauncher.app.data.JancarBluetoothManager
 import com.openlauncher.app.data.ShortcutConfig
 import com.openlauncher.app.data.SoundPadConfig
 import com.openlauncher.app.data.WeatherApi
@@ -69,6 +70,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     private val _steeringCaptureIsLongPress = MutableStateFlow(false)
     val steeringCaptureIsLongPress: StateFlow<Boolean> = _steeringCaptureIsLongPress
+    private var lastJancarKeyId = Int.MIN_VALUE
+    private var lastJancarKeyAtMs = 0L
 
     private val _triggerVoiceAssistant = MutableSharedFlow<Unit>()
     val triggerVoiceAssistant: SharedFlow<Unit> = _triggerVoiceAssistant
@@ -122,6 +125,31 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
         executeSteeringAction(targetAction)
         return true
+    }
+
+    fun handleJancarKey(keyId: Int, eventType: Int) {
+        if (eventType == Int.MIN_VALUE) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        // Jancar can emit a press and a release broadcast for one physical
+        // press. Collapse the pair so media and volume actions run once.
+        if (keyId == lastJancarKeyId && now - lastJancarKeyAtMs < 500L) return
+        lastJancarKeyId = keyId
+        lastJancarKeyAtMs = now
+
+        when (keyId) {
+            1 -> executeSteeringAction(SteeringWheelAction.VOLUME_UP)
+            2 -> executeSteeringAction(SteeringWheelAction.VOLUME_DOWN)
+            32 -> if (JancarBluetoothManager.hasActiveCall()) {
+                JancarBluetoothManager.hangPhone()
+            } else {
+                skipNext()
+            }
+            33 -> if (JancarBluetoothManager.isIncomingCall()) {
+                JancarBluetoothManager.listenPhone()
+            } else {
+                skipPrev()
+            }
+        }
     }
 
     private fun executeSteeringAction(action: SteeringWheelAction) {
@@ -200,7 +228,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── CarPlay / Android Auto picker ─────────────────────────────────────────
-    enum class AppPickerTarget { CARPLAY, ANDROID_AUTO, PIP, RADIO }
+    enum class AppPickerTarget { CARPLAY, ANDROID_AUTO, PIP, RADIO, MEDIA }
 
     private val _appPickerTarget = MutableStateFlow<AppPickerTarget?>(null)
     val carPlayPickerActive: StateFlow<Boolean> = MutableStateFlow(false) // kept for compat
@@ -226,12 +254,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _nav.value = NavDestination.APP_LIBRARY
     }
 
+    fun startMediaPlayerPicker() {
+        _appPickerTarget.value = AppPickerTarget.MEDIA
+        _nav.value = NavDestination.APP_LIBRARY
+    }
+
     fun assignPickerApp(app: AppInfo) {
         when (_appPickerTarget.value) {
             AppPickerTarget.CARPLAY      -> updateSettings { copy(carPlayPackage = app.packageName) }
             AppPickerTarget.ANDROID_AUTO -> updateSettings { copy(androidAutoPackage = app.packageName) }
             AppPickerTarget.PIP          -> updateSettings { copy(pipAppPackage = app.packageName) }
             AppPickerTarget.RADIO        -> updateSettings { copy(radioPackage = app.packageName) }
+            AppPickerTarget.MEDIA        -> updateSettings { copy(mediaPlayerPackage = app.packageName) }
             null -> {}
         }
         _appPickerTarget.value = null
@@ -242,6 +276,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun clearAndroidAutoApp()  { updateSettings { copy(androidAutoPackage = "") } }
     fun clearPipApp()          { updateSettings { copy(pipAppPackage = "") } }
     fun clearRadioApp()        { updateSettings { copy(radioPackage = "") } }
+    fun clearMediaPlayerApp()  { updateSettings { copy(mediaPlayerPackage = "") } }
 
     fun updateWidgetConfig(id: String, spanX: Int, spanY: Int) {
         updateSettings {
@@ -459,19 +494,127 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── Now Playing ───────────────────────────────────────────────────────────
-    val nowPlaying: StateFlow<NowPlayingState?> = MediaListenerService.nowPlaying
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val nowPlaying: StateFlow<NowPlayingState?> = combine(
+        MediaListenerService.nowPlaying,
+        JancarBluetoothManager.playback
+    ) { androidSession, jancar ->
+        // The head unit's MediaSession follows track and playback-state
+        // changes live. Prefer it when present; Jancar's ID3 callback is the
+        // fallback on units that do not expose that session to other apps.
+        if (androidSession?.controller != null || (androidSession?.title?.isNotBlank() == true)) {
+            androidSession
+        } else if (jancar != null) {
+            NowPlayingState(
+                title = jancar.title.ifBlank {
+                    "Bluetooth"
+                },
+                artist = jancar.artist,
+                albumArt = null,
+                artUri = null,
+                isPlaying = jancar.isPlaying,
+                controller = null,
+                durationMs = jancar.durationMs
+            )
+        } else androidSession
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    fun playPause() { nowPlaying.value?.controller?.also { ctrl ->
-        val state = ctrl.playbackState?.state
-        if (state == android.media.session.PlaybackState.STATE_PLAYING)
-            ctrl.transportControls?.pause()
-        else
-            ctrl.transportControls?.play()
-    }}
+    fun launchMediaPlayer(): Boolean {
+        val app = getApplication<Application>()
+        val packageName = settings.value.mediaPlayerPackage
+        if (packageName.isBlank()) return false
+        val intent = runCatching { app.packageManager.getLaunchIntentForPackage(packageName) }.getOrNull() ?: return false
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return runCatching {
+            app.startActivity(intent)
+            viewModelScope.launch {
+                repeat(8) {
+                    delay(500)
+                    MediaListenerService.requestRefresh()
+                    MediaListenerService.nowPlaying.value?.controller?.let { controller ->
+                        if (controller.playbackState?.state != android.media.session.PlaybackState.STATE_PLAYING) {
+                            controller.transportControls?.play()
+                        }
+                        return@launch
+                    }
+                }
+                // The Jancar media service may expose no Android MediaSession.
+                // Only send its play command after the launched player had time
+                // to publish one, so the app is not interrupted during startup.
+                if (JancarBluetoothManager.isBound.value) {
+                    JancarBluetoothManager.requestMusicInfo()
+                    JancarBluetoothManager.playBtMusic()
+                }
+            }
+        }.isSuccess
+    }
 
-    fun skipNext() { nowPlaying.value?.controller?.transportControls?.skipToNext() }
-    fun skipPrev() { nowPlaying.value?.controller?.transportControls?.skipToPrevious() }
+    private fun dispatchMediaKey(keyCode: Int) {
+        val audio = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
+        val downTime = android.os.SystemClock.uptimeMillis()
+        runCatching {
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(downTime, downTime, android.view.KeyEvent.ACTION_DOWN, keyCode, 0))
+            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.os.SystemClock.uptimeMillis(), downTime, android.view.KeyEvent.ACTION_UP, keyCode, 0))
+        }
+    }
+
+    fun playPause() {
+        val sessionController = MediaListenerService.nowPlaying.value?.controller
+        if (sessionController != null) {
+            if (sessionController.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING) {
+                sessionController.transportControls?.pause()
+            } else {
+                sessionController.transportControls?.play()
+            }
+            MediaListenerService.requestRefresh()
+            return
+        }
+        if (JancarBluetoothManager.isBound.value) {
+            if (JancarBluetoothManager.playback.value?.isPlaying == true) JancarBluetoothManager.pauseBtMusic()
+            else JancarBluetoothManager.playBtMusic()
+            return
+        }
+        val current = MediaListenerService.nowPlaying.value
+        val ctrl = current?.controller
+        if (ctrl == null) {
+            if (current?.isPlaying == true) {
+                dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
+            } else {
+                launchMediaPlayer()
+                dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+            }
+            return
+        }
+        if (ctrl.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING) ctrl.transportControls?.pause()
+        else ctrl.transportControls?.play()
+    }
+
+    fun skipNext() {
+        // On Jancar head units the vendor service targets the phone's A2DP
+        // session directly; the visible Android MediaSession may belong to a
+        // different player and ignore skip commands.
+        if (JancarBluetoothManager.isBound.value && JancarBluetoothManager.isA2dpConnected() &&
+            JancarBluetoothManager.nextBtMusic()
+        ) return
+        val sessionController = MediaListenerService.nowPlaying.value?.controller
+        if (sessionController != null) {
+            sessionController.transportControls?.skipToNext()
+            return
+        }
+        nowPlaying.value?.controller?.transportControls?.skipToNext()
+            ?: dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+    }
+    fun skipPrev() {
+        if (JancarBluetoothManager.isBound.value && JancarBluetoothManager.isA2dpConnected() &&
+            JancarBluetoothManager.previousBtMusic()
+        ) return
+        val sessionController = MediaListenerService.nowPlaying.value?.controller
+        if (sessionController != null) {
+            sessionController.transportControls?.skipToPrevious()
+            return
+        }
+        nowPlaying.value?.controller?.transportControls?.skipToPrevious()
+            ?: dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+    }
 
     // ── Weather ───────────────────────────────────────────────────────────────
     private val _weather = MutableStateFlow<WeatherState?>(null)

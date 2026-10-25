@@ -77,6 +77,7 @@ class SettingsRepository(private val context: Context) {
         val AUTO_RESUME_MEDIA = booleanPreferencesKey("auto_resume_media_on_bluetooth")
         val LAST_DESTINATION = stringPreferencesKey("last_destination")
         val STEERING_BINDINGS_JSON = stringPreferencesKey("steering_wheel_bindings_json")
+        val MEDIA_PLAYER_PACKAGE = stringPreferencesKey("media_player_package")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data
@@ -127,6 +128,7 @@ class SettingsRepository(private val context: Context) {
                 launchAtBoot = prefs[Keys.LAUNCH_AT_BOOT] ?: defaults.launchAtBoot,
                 restoreLastPage = prefs[Keys.RESTORE_LAST_PAGE] ?: defaults.restoreLastPage,
                 autoResumeMediaOnBluetooth = prefs[Keys.AUTO_RESUME_MEDIA] ?: defaults.autoResumeMediaOnBluetooth,
+                mediaPlayerPackage = prefs[Keys.MEDIA_PLAYER_PACKAGE] ?: defaults.mediaPlayerPackage,
                 lastDestination = prefs[Keys.LAST_DESTINATION] ?: defaults.lastDestination,
                 steeringWheelBindings = prefs[Keys.STEERING_BINDINGS_JSON]?.let { json ->
                     runCatching {
@@ -204,6 +206,7 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.LAUNCH_AT_BOOT] = s.launchAtBoot
             prefs[Keys.RESTORE_LAST_PAGE] = s.restoreLastPage
             prefs[Keys.AUTO_RESUME_MEDIA] = s.autoResumeMediaOnBluetooth
+            prefs[Keys.MEDIA_PLAYER_PACKAGE] = s.mediaPlayerPackage
             prefs[Keys.LAST_DESTINATION] = s.lastDestination
             prefs[Keys.STEERING_BINDINGS_JSON] = gson.toJson(s.steeringWheelBindings)
             context.getSharedPreferences("launcher_runtime", Context.MODE_PRIVATE)

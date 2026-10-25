@@ -81,6 +81,7 @@ data class AppSettings(
     val launchAtBoot: Boolean = true,
     val restoreLastPage: Boolean = true,
     val autoResumeMediaOnBluetooth: Boolean = true,
+    val mediaPlayerPackage: String = "",
     val lastDestination: String = "HOME",
     val steeringWheelBindings: List<SteeringWheelBinding> = listOf(
         SteeringWheelBinding(85, SteeringWheelAction.PLAY_PAUSE),
