@@ -68,7 +68,7 @@ fun OfflineManagerScreen(
                     }
                 }
             }
-            .padding(24.dp),
+            .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         // Header
@@ -77,25 +77,6 @@ fun OfflineManagerScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Icon(Icons.Default.Public, null, tint = accent, modifier = Modifier.size(28.dp))
-                Column {
-                    LocalizedLabel(
-                        text = "GESTIONNAIRE DE CARTES HORS-LIGNE MAPBOX",
-                        style = MaterialTheme.typography.titleLarge,
-                        color = textColor,
-                        fontSize = 16.sp,
-                        letterSpacing = 2.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    LocalizedLabel(
-                        text = "TileStore Mapbox - Téléchargement de régions mondiales",
-                        color = mutedColor,
-                        fontSize = 11.sp
-                    )
-                }
-            }
-
             TextButton(
                 onClick = { viewModel.clearAllRegions() },
                 colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
@@ -114,7 +95,7 @@ fun OfflineManagerScreen(
                 .clip(RoundedCornerShape(28.dp))
                 .background(cardBg)
                 .border(1.dp, cardBorder, RoundedCornerShape(28.dp))
-                .padding(28.dp),
+                .padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(28.dp)
         ) {
             // Regions List Column
@@ -209,7 +190,7 @@ fun OfflineManagerScreen(
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(22.dp))
                     .background(cardBorder.copy(alpha = 0.1f))
-                    .padding(24.dp),
+                    .padding(8.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

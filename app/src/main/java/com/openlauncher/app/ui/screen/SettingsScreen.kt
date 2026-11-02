@@ -1,5 +1,7 @@
 package com.openlauncher.app.ui.screen
 
+import androidx.compose.foundation.horizontalScroll
+
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -58,7 +60,17 @@ fun SettingsScreen(
     onAssignMediaPlayer: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var showHardwareSteering by remember { mutableStateOf(false) }
+    if(showHardwareSteering) {
+        SteeringWheelSettingsScreen(onBack={showHardwareSteering=false},modifier=modifier)
+        return
+    }
     val context = LocalContext.current
+    val navigationVm: com.openlauncher.app.viewmodel.NavigationViewModel = viewModel()
+    val operationScope = rememberCoroutineScope()
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupMessage by remember { mutableStateOf<String?>(null) }
+
     fun readSystemBrightness(): Float = runCatching {
         (Settings.System.getInt(
             context.contentResolver,
@@ -68,7 +80,7 @@ fun SettingsScreen(
     }.getOrDefault(0.5f)
     var systemBrightness by remember { mutableFloatStateOf(readSystemBrightness()) }
     var canWriteSystemSettings by remember { mutableStateOf(Settings.System.canWrite(context)) }
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val brightnessObserver = object : android.database.ContentObserver(
             android.os.Handler(android.os.Looper.getMainLooper())
@@ -96,6 +108,7 @@ fun SettingsScreen(
     }
     var showResetDialog       by remember { mutableStateOf(false) }
     var showAccentPicker      by remember { mutableStateOf(false) }
+    var showButtonPicker      by remember { mutableStateOf(false) }
     var showBgPicker          by remember { mutableStateOf(false) }
     var showGradientEndPicker by remember { mutableStateOf(false) }
     var showFontColorPicker   by remember { mutableStateOf(false) }
@@ -121,22 +134,22 @@ fun SettingsScreen(
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
     ) { uri: Uri? ->
-        uri?.let {
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                com.openlauncher.app.util.BackupRestoreManager.exportBackup(context, it, settings)
-            }
+        if (uri != null && !backupBusy) operationScope.launch {
+            backupBusy = true
+            try {
+                val ok = com.openlauncher.app.util.BackupRestoreManager.exportBackup(context, uri, settings)
+                backupMessage = if (ok) "Backup saved." else "Unable to save the backup. Check storage access."
+            } finally { backupBusy = false }
         }
     }
-
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let {
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                com.openlauncher.app.util.BackupRestoreManager.importBackup(context, it) { restoredSettings ->
-                    onUpdate { restoredSettings }
-                }
-            }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null && !backupBusy) operationScope.launch {
+            backupBusy = true
+            try {
+                val ok = com.openlauncher.app.util.BackupRestoreManager.importBackup(context, uri)
+                backupMessage = if (ok) "Backup restored. Offline maps must already be present or downloaded again."
+                else "Unable to restore this backup. Check the file format and storage access."
+            } finally { backupBusy = false }
         }
     }
 
@@ -152,21 +165,42 @@ fun SettingsScreen(
         modifier = Modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 16.dp),
+            .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // ── Title ────────────────────────────────────────────────────────────
-        LocalizedLabel(
-            text          = "SETTINGS",
-            style         = MaterialTheme.typography.titleLarge,
-            color         = if (isDayMode) Color(0xFF111111) else accent,
-            letterSpacing = 3.sp,
-            fontSize      = 14.sp
-        )
-
-        Spacer(Modifier.height(4.dp))
-
-        SettingsSection("Langue / Language") {
+        SettingsSection("Visual theme") {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                com.openlauncher.app.data.VisualTheme.entries.forEach { theme ->
+                    FilterChip(selected = settings.visualTheme == theme, onClick = { onUpdate { copy(visualTheme = theme) } },
+                        label = { LocalizedLabel(when (theme) {
+                            com.openlauncher.app.data.VisualTheme.MATERIAL -> "Material"
+                            com.openlauncher.app.data.VisualTheme.OLED -> "Pure black"
+                            com.openlauncher.app.data.VisualTheme.DYNAMIC -> "Material You"
+                            com.openlauncher.app.data.VisualTheme.CUSTOM -> "Custom colors"
+                        }) }, modifier = Modifier.heightIn(min = 48.dp))
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                LocalizedLabel("Accent from album art", modifier = Modifier.weight(1f))
+                Switch(checked = settings.albumAccent, onCheckedChange = { onUpdate { copy(albumAccent = it) } })
+            }
+            TextButton(onClick = { onUpdate { copy(appFont = com.openlauncher.app.data.AppFont.SYSTEM, visualTheme = com.openlauncher.app.data.VisualTheme.MATERIAL) } }, modifier = Modifier.heightIn(min = 48.dp)) {
+                LocalizedLabel("Use Roboto and Material styling")
+            }
+            LocalizedLabel("Personalize while parked", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        SettingsSection("Dock shortcut") {
+            LocalizedLabel("Choose an existing favorite for the dock", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = settings.dockFavoriteSlot == -1, onClick = { onUpdate { copy(dockFavoriteSlot = -1) } }, label = { LocalizedLabel("Radio") }, modifier = Modifier.heightIn(min = 48.dp))
+                settings.shortcuts.forEachIndexed { index, shortcut ->
+                    if (index < 4 && shortcut.packageName.isNotBlank()) FilterChip(
+                        selected = settings.dockFavoriteSlot == index, onClick = { onUpdate { copy(dockFavoriteSlot = index) } },
+                        label = { androidx.compose.material3.Text(shortcut.label.ifBlank { shortcut.packageName }) }, modifier = Modifier.heightIn(min = 48.dp))
+                }
+            }
+        }
+        SettingsSection("Language") {
             LocalizedLabel(
                 if (settings.appLanguage == AppLanguage.FRENCH_CANADA) "Langue du launcher et de l’assistant vocal" else "Launcher and voice assistant language",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -206,7 +240,7 @@ fun SettingsScreen(
             // Bumped on ON_RESUME so statuses refresh when the user returns from
             // system settings (recomposition alone doesn't re-run these checks)
             var permissionRefresh by remember { mutableIntStateOf(0) }
-            val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
             DisposableEffect(lifecycleOwner) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                     if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) permissionRefresh++
@@ -495,7 +529,7 @@ fun SettingsScreen(
                         modifier      = Modifier.width(160.dp)
                     )
                     if (homeInput != settings.homeAddress) {
-                        IconButton(onClick = { onUpdate { copy(homeAddress = homeInput) } }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { onUpdate { copy(homeAddress = homeInput) }; navigationVm.saveAddressPlace("home", "Domicile", homeInput) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Check, "Save", tint = accent, modifier = Modifier.size(16.dp))
                         }
                     }
@@ -521,7 +555,7 @@ fun SettingsScreen(
                         modifier      = Modifier.width(160.dp)
                     )
                     if (workInput != settings.workAddress) {
-                        IconButton(onClick = { onUpdate { copy(workAddress = workInput) } }, modifier = Modifier.size(32.dp)) {
+                        IconButton(onClick = { onUpdate { copy(workAddress = workInput) }; navigationVm.saveAddressPlace("work", "Travail", workInput) }, modifier = Modifier.size(32.dp)) {
                             Icon(Icons.Default.Check, "Save", tint = accent, modifier = Modifier.size(16.dp))
                         }
                     }
@@ -708,6 +742,23 @@ fun SettingsScreen(
 
             SettingsDivider()
 
+            // Button Color
+            SettingsRow(
+                label    = "Button Color",
+                sublabel = "Action and interactive buttons",
+                icon     = Icons.Default.SmartButton
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(settings.buttonColor))
+                        .clickable { showButtonPicker = true }
+                )
+            }
+
+            SettingsDivider()
+
             // Background color + gradient
             SettingsRow(
                 label    = "Background",
@@ -887,6 +938,9 @@ fun SettingsScreen(
             )
             if (settings.wallpaperUri.isNotEmpty()) {
                 Column {
+                    SettingsRow(label = "Wallpaper blur", sublabel = "${settings.wallpaperBlur.toInt()} dp", icon = Icons.Default.BlurOn) {}
+                    Slider(value = settings.wallpaperBlur, onValueChange = { onUpdate { copy(wallpaperBlur = it) } }, valueRange = 0f..24f, steps = 5,
+                        onValueChangeFinished = {}, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp))
                     SettingsRow(
                         label    = "Wallpaper Dim",
                         sublabel = "${"%.0f".format(settings.wallpaperDim * 100)}%",
@@ -986,7 +1040,7 @@ fun SettingsScreen(
             // 1. Reset A-GPS Button
             SettingsButton(
                 label    = "Reset A-GPS Assistance Data",
-                sublabel = calibrationStatus ?: "Forces cold start to download fresh satellite orbits entirely offline",
+                sublabel = calibrationStatus ?: "Resets GPS assistance. A new fix can take longer; downloading assistance requires a network.",
                 icon     = Icons.Default.MyLocation,
                 accent   = accent,
                 onClick  = {
@@ -1000,11 +1054,11 @@ fun SettingsScreen(
                         lm.sendExtraCommand(android.location.LocationManager.GPS_PROVIDER, "force_xtra_injection", null)
                         lm.sendExtraCommand(android.location.LocationManager.GPS_PROVIDER, "force_time_injection", null)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+                        android.util.Log.w("SettingsScreen", "GPS assistance reset was rejected by the device")
                     }
 
                     calibrationStatus = if (success) {
-                        "Cold start forced — go outdoors for a fresh satellite lock (2–3 min)"
+                        "GPS assistance reset. Wait outdoors for a new satellite fix."
                     } else {
                         "Not supported by this device's GPS driver — no data was cleared"
                     }
@@ -1068,6 +1122,8 @@ fun SettingsScreen(
         val captureIsLong by launcherVm.steeringCaptureIsLongPress.collectAsStateWithLifecycle()
 
         SettingsSection("Commandes au volant (SWC)") {
+            SettingsButton(label="Apprentissage matériel du volant",sublabel="Calibration ADC et configuration véhicule Jancar",icon=Icons.Default.DirectionsCar,accent=accent,onClick={showHardwareSteering=true})
+
             SteeringWheelAction.entries.forEachIndexed { index, action ->
                 if (index > 0) SettingsDivider()
                 val shortBinding = settings.steeringWheelBindings.firstOrNull { it.action == action }
@@ -1099,13 +1155,13 @@ fun SettingsScreen(
                                 onClick = { launcherVm.requestSteeringKeyCapture(action, isLongPress = false) },
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Court", fontSize = 11.sp)
+                                LocalizedLabel("Court", fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = { launcherVm.requestSteeringKeyCapture(action, isLongPress = true) },
                                 shape = RoundedCornerShape(12.dp)
                             ) {
-                                Text("Long", fontSize = 11.sp)
+                                LocalizedLabel("Long", fontSize = 11.sp)
                             }
                         }
                     }
@@ -1116,11 +1172,11 @@ fun SettingsScreen(
         if (captureAction != null) {
             AlertDialog(
                 onDismissRequest = { launcherVm.requestSteeringKeyCapture(null) },
-                title = { Text(if (captureIsLong) "Appui long : Appuyez sur un bouton" else "Appui court : Appuyez sur un bouton") },
-                text = { Text("Veuillez presser le bouton physique de votre volant pour l'associer à l'action sélectionnée (${if (captureIsLong) "Appui Long" else "Appui Court"}).") },
+                title = { LocalizedLabel(if (captureIsLong) "Appui long : Appuyez sur un bouton" else "Appui court : Appuyez sur un bouton") },
+                text = { LocalizedLabel("Press a steering wheel button to assign the selected action.") },
                 confirmButton = {
                     TextButton(onClick = { launcherVm.requestSteeringKeyCapture(null) }) {
-                        Text("Annuler")
+                        LocalizedLabel("Annuler")
                     }
                 }
             )
@@ -1128,13 +1184,15 @@ fun SettingsScreen(
 
         // ── Sauvegarde et Restauration ───────────────────────────────────────
         SettingsSection("Sauvegarde et Restauration") {
+            backupMessage?.let { LocalizedLabel(it, modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurface) }
+            if (backupBusy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             SettingsButton(
                 label    = "Exporter la sauvegarde",
-                sublabel = "Conserver les réglages, widgets, favoris et cartes dans un fichier JSON",
+                sublabel = "Conserver les réglages, widgets, favoris et métadonnées des cartes. Les tuiles ne sont pas incluses.",
                 icon     = Icons.Default.Save,
                 accent   = accent,
                 onClick  = {
-                    exportLauncher.launch("openlauncher_backup_${System.currentTimeMillis()}.json")
+                    if (!backupBusy) exportLauncher.launch("openlauncher_backup_${System.currentTimeMillis()}.json")
                 }
             )
 
@@ -1146,7 +1204,7 @@ fun SettingsScreen(
                 icon     = Icons.Default.Restore,
                 accent   = accent,
                 onClick  = {
-                    importLauncher.launch(arrayOf("application/json", "*/*"))
+                    if (!backupBusy) importLauncher.launch(arrayOf("application/json", "*/*"))
                 }
             )
         }
@@ -1160,7 +1218,9 @@ fun SettingsScreen(
                 accent   = accent,
                 onClick  = {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/dw2lam/openlauncher/releases"))
-                    context.startActivity(intent)
+                    runCatching { context.startActivity(intent) }.onFailure {
+                        backupMessage = "No compatible app is available to open this link."
+                    }
                 }
             )
         }
@@ -1184,7 +1244,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(32.dp))
 
         LocalizedLabel(
-            text          = "v0.0.5  ·  Made by David Lam  ·  2026",
+            text          = "v${com.openlauncher.app.BuildConfig.VERSION_NAME}  ·  David Lam  ·  2026",
             color         = if (isDayMode) Color(0xFFAAAAAA) else Color(0xFF2A2A2A),
             fontSize      = 10.sp,
             letterSpacing = 1.sp,
@@ -1212,6 +1272,15 @@ fun SettingsScreen(
             initialColor    = Color(settings.accentColor),
             onColorSelected = { c -> onUpdate { copy(accentColor = c.toArgb()) } },
             onDismiss       = { showAccentPicker = false }
+        )
+    }
+
+    if (showButtonPicker) {
+        ColorPickerDialog(
+            title           = "Button Color",
+            initialColor    = Color(settings.buttonColor),
+            onColorSelected = { c -> onUpdate { copy(buttonColor = c.toArgb()) } },
+            onDismiss       = { showButtonPicker = false }
         )
     }
 
@@ -1317,7 +1386,7 @@ private fun SettingsRow(
 ) {
     val isDayMode   = LocalDayMode.current
     val labelColor  = if (isDayMode) Color(0xFF111111) else Color(0xFFDDDDDD)
-    val subColor    = if (isDayMode) Color(0xFF888888) else Color(0xFF444444)
+    val subColor    = if (isDayMode) Color(0xFF666666) else Color(0xFFAAAAAA)
     val iconTint    = if (isDayMode) Color(0xFF777777) else MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
     Row(
         modifier = Modifier
@@ -1346,13 +1415,14 @@ private fun ColumnScope.SettingsButton(
 ) {
     val isDayMode  = LocalDayMode.current
     val labelColor = if (isDayMode) Color(0xFF111111) else Color(0xFFDDDDDD)
-    val subColor   = if (isDayMode) Color(0xFF888888) else Color(0xFF444444)
+    val subColor   = if (isDayMode) Color(0xFF666666) else Color(0xFFAAAAAA)
     val chevronC   = if (isDayMode) Color(0xFFBBBBBB) else Color(0xFF2A2A2A)
     val iconTint   = if (isDayMode) Color(0xFF777777) else MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
+            .heightIn(min = 48.dp)
             .padding(horizontal = 0.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {

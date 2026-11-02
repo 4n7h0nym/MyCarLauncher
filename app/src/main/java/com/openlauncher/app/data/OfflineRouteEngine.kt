@@ -132,9 +132,9 @@ object OfflineRouteEngine {
                     .applyDefaultNavigationOptions()
                     .coordinatesList(listOf(origin, destination))
                     .steps(true)
-                    .language("fr-CA")
+                    .language(java.util.Locale.getDefault().toLanguageTag())
                     .build()
-                nav.requestRoutes(options, object : NavigationRouterCallback {
+                val requestId = nav.requestRoutes(options, object : NavigationRouterCallback {
                     override fun onRoutesReady(
                         routes: List<com.mapbox.navigation.base.route.NavigationRoute>,
                         routerOrigin: String
@@ -152,7 +152,11 @@ object OfflineRouteEngine {
                         // Register the exact route we return to the UI so progress, map matching,
                         // and SDK-managed offline rerouting all operate on the same route.
                         nav.setNavigationRoutes(routes)
-                        nav.startTripSession(false)
+                        try {
+                            nav.startTripSession(false)
+                        } catch (error: SecurityException) {
+                            Log.w(TAG, "Location permission unavailable; route remains available without trip tracking", error)
+                        }
                         if (continuation.isActive) continuation.resume(result)
                     }
 
@@ -168,7 +172,10 @@ object OfflineRouteEngine {
                         if (continuation.isActive) continuation.resume(null)
                     }
                 })
-                continuation.invokeOnCancellation { /* Ignore late callback after cancellation. */ }
+                continuation.invokeOnCancellation {
+                    // Cancellation may originate on an IO thread; SDK calls stay on main.
+                    android.os.Handler(android.os.Looper.getMainLooper()).post { nav.cancelRouteRequest(requestId) }
+                }
             }
         }
 

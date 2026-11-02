@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,14 +105,14 @@ fun NavigationScreen(
     onMapThemeModeChange: (MapThemeMode) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val uiState by navViewModel.uiState.collectAsState()
+    val uiState by navViewModel.uiState.collectAsStateWithLifecycle()
     var mapLoadError by remember { mutableStateOf<String?>(null) }
     val cardBg     = MaterialTheme.colorScheme.surface
     val cardBorder = MaterialTheme.colorScheme.outline
     val textColor  = MaterialTheme.colorScheme.onBackground
     val mutedColor = MaterialTheme.colorScheme.onSurfaceVariant
 
-    val isDayMode = settings.dayNightMode == DayNightMode.LIGHT
+    val isDayMode = com.openlauncher.app.ui.theme.LocalDayMode.current
     val isMapLightMode = when (settings.mapThemeMode) {
         MapThemeMode.FOLLOW_APP -> isDayMode
         MapThemeMode.LIGHT -> true
@@ -121,14 +123,14 @@ fun NavigationScreen(
     val context = LocalContext.current
     var voiceGuidanceEnabled by rememberSaveable { mutableStateOf(true) }
     var ttsReady by remember { mutableStateOf(false) }
-    val localTts = remember(context) {
+    val localTts = remember(context, settings.appLanguage) {
         val engineRef = java.util.concurrent.atomic.AtomicReference<TextToSpeech?>()
         val engine = TextToSpeech(context) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 engineRef.get()?.let { readyEngine ->
-                    val canadianFrench = readyEngine.setLanguage(Locale.CANADA_FRENCH)
+                    val canadianFrench = readyEngine.setLanguage(Locale.forLanguageTag(settings.appLanguage.tag))
                     if (canadianFrench == TextToSpeech.LANG_MISSING_DATA || canadianFrench == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        val french = readyEngine.setLanguage(Locale.FRANCE)
+                        val french = readyEngine.setLanguage(Locale.forLanguageTag(settings.appLanguage.tag.substringBefore("-")))
                         ttsReady = french != TextToSpeech.LANG_MISSING_DATA && french != TextToSpeech.LANG_NOT_SUPPORTED
                     } else {
                         ttsReady = true
@@ -168,7 +170,8 @@ fun NavigationScreen(
         val distance = FloatArray(1)
         Location.distanceBetween(current.latitude, current.longitude, point.latitude, point.longitude, distance)
         if (distance[0] <= 250f) {
-            val distanceText = if (distance[0] < 1000f) "Dans ${distance[0].roundToInt()} mètres, " else ""
+            val distanceText = if (settings.appLanguage == com.openlauncher.app.data.AppLanguage.ENGLISH_CANADA)
+                "In ${distance[0].roundToInt()} metres, " else "Dans ${distance[0].roundToInt()} mètres, "
             localTts.speak("$distanceText${maneuver.instruction}", TextToSpeech.QUEUE_FLUSH, null, "maneuver-${uiState.routeStepIndex}")
             spokenManeuverIndex = uiState.routeStepIndex
         }
@@ -179,9 +182,12 @@ fun NavigationScreen(
 
     // Permissions GPS
     val locationPermissionState = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION)
+    var requestedLocationPermission by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(locationPermissionState.status) {
         navViewModel.onLocationPermissionGranted(locationPermissionState.status.isGranted)
-        if (!locationPermissionState.status.isGranted) {
+        if (!locationPermissionState.status.isGranted && !requestedLocationPermission) {
+            // A denial changes shouldShowRationale; do not immediately reopen the system prompt.
+            requestedLocationPermission = true
             locationPermissionState.launchPermissionRequest()
         }
     }
@@ -243,7 +249,7 @@ fun NavigationScreen(
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     LocalizedLabel("La carte Mapbox n’a pas pu charger son style.", color = MaterialTheme.colorScheme.onErrorContainer, fontWeight = FontWeight.Bold)
                     LocalizedLabel(error, color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 11.sp, maxLines = 3)
-                    LocalizedLabel("Vérifiez l’accès réseau et la configuration du jeton Mapbox du build installé.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 11.sp)
+                    LocalizedLabel("Vérifiez la connexion réseau et les cartes hors ligne téléchargées.", color = MaterialTheme.colorScheme.onErrorContainer, fontSize = 11.sp)
                 }
             }
         }
@@ -332,7 +338,7 @@ fun NavigationScreen(
                     ) {
                         Icon(Icons.Default.Place, contentDescription = null, tint = accent, modifier = Modifier.size(26.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            LocalizedLabel(poi.name, color = textColor, fontWeight = FontWeight.Bold, maxLines = 1)
+                            androidx.compose.material3.Text(poi.name, color = textColor, fontWeight = FontWeight.Bold, maxLines = 1)
                             LocalizedLabel(poi.category + if (poi.address.isBlank()) "" else " • ${poi.address}", color = mutedColor, fontSize = 11.sp, maxLines = 1)
                         }
                         TextButton(
@@ -516,8 +522,8 @@ fun NavigationScreen(
                                         }
                                         Icon(ico, null, tint = accent, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            LocalizedLabel(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            LocalizedLabel(place.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            androidx.compose.material3.Text(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            androidx.compose.material3.Text(place.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                     }
                                 }
@@ -540,8 +546,8 @@ fun NavigationScreen(
                                     ) {
                                         Icon(Icons.Default.Place, null, tint = accent, modifier = Modifier.size(16.dp))
                                         Column(modifier = Modifier.weight(1f)) {
-                                            LocalizedLabel(poi.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                            LocalizedLabel(poi.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
+                                            androidx.compose.material3.Text(poi.name, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                            androidx.compose.material3.Text(poi.address, color = mutedColor, fontSize = 10.sp, maxLines = 1)
                                         }
                                         if (poi.distanceKm > 0f) {
                                             LocalizedLabel("%.1f km".format(poi.distanceKm), color = mutedColor, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
@@ -583,7 +589,7 @@ fun NavigationScreen(
                                     else    -> Icons.Default.Star
                                 }
                                 Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(16.dp))
-                                LocalizedLabel(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                androidx.compose.material3.Text(place.label, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
 
                                 IconButton(
                                     onClick = { editingPlace = place },
@@ -632,44 +638,79 @@ fun NavigationScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Bannière de guidage supérieure
+                // Bannière de guidage supérieure (Style Android Auto / AAOS avec flèches de voies)
                 uiState.nextManeuver?.let { maneuver ->
                     Surface(
-                        shape = RoundedCornerShape(20.dp),
-                        color = cardBg.copy(alpha = 0.95f),
-                        shadowElevation = 8.dp,
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color(0xFF005A49),
+                        shadowElevation = 10.dp,
                         modifier = Modifier
                             .weight(1f)
-                            .border(1.dp, accent, RoundedCornerShape(20.dp))
+                            .border(1.dp, Color(0xFF00796B), RoundedCornerShape(24.dp))
                     ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(accent),
-                                contentAlignment = Alignment.Center
+                            // Top row: Lane guidance / Intersection options (Android Auto style)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Alignment.CenterHorizontally.let { Arrangement.Center },
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                val navIcon = when {
-                                    maneuver.iconType.contains("RIGHT") -> Icons.Default.TurnRight
-                                    maneuver.iconType.contains("LEFT")  -> Icons.Default.TurnLeft
-                                    else -> Icons.Default.Straight
+                                val laneIcons = when {
+                                    maneuver.iconType.contains("RIGHT") -> listOf(Icons.Default.ArrowUpward, Icons.Default.TurnRight)
+                                    maneuver.iconType.contains("LEFT")  -> listOf(Icons.Default.ArrowUpward, Icons.Default.TurnLeft)
+                                    maneuver.iconType.contains("ROUNDABOUT") -> listOf(Icons.Default.Refresh)
+                                    else -> listOf(Icons.Default.ArrowUpward, Icons.Default.TurnRight, Icons.Default.TurnLeft)
                                 }
-                                Icon(navIcon, contentDescription = null, tint = Color.Black, modifier = Modifier.size(24.dp))
+                                laneIcons.forEach { icon ->
+                                    Icon(
+                                        icon,
+                                        contentDescription = null,
+                                        tint = Color.White.copy(alpha = 0.85f),
+                                        modifier = Modifier.size(20.dp).padding(horizontal = 4.dp)
+                                    )
+                                }
                             }
-                            Column {
-                                LocalizedLabel(maneuver.instruction, color = textColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                LocalizedLabel(
-                                    if (uiState.isOfflineMode && uiState.routeSteps.isNotEmpty())
-                                        "Étape ${uiState.routeStepIndex + 1}/${uiState.routeSteps.size} • guidage hors ligne"
-                                    else "Itinéraire prioritaire le plus rapide • Mapbox Navigation",
-                                    color = mutedColor,
-                                    fontSize = 11.sp
-                                )
+
+                            // Main row: Icon + Distance + Instruction
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(48.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    val navIcon = when {
+                                        maneuver.iconType.contains("RIGHT") -> Icons.Default.TurnRight
+                                        maneuver.iconType.contains("LEFT")  -> Icons.Default.TurnLeft
+                                        maneuver.iconType.contains("ROUNDABOUT") -> Icons.Default.Refresh
+                                        else -> Icons.Default.Straight
+                                    }
+                                    Icon(navIcon, contentDescription = null, tint = Color(0xFF005A49), modifier = Modifier.size(26.dp))
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    LocalizedLabel(
+                                        text = if (maneuver.distanceMeters >= 1000.0) "%.1f km".format(java.util.Locale.US, maneuver.distanceMeters / 1000.0) else "%.0f m".format(java.util.Locale.US, maneuver.distanceMeters),
+                                        color = Color.White,
+                                        fontSize = 24.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(Modifier.height(2.dp))
+                                    LocalizedLabel(
+                                        maneuver.instruction,
+                                        color = Color.White.copy(alpha = 0.9f),
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 2
+                                    )
+                                }
                             }
                         }
                     }
@@ -758,8 +799,8 @@ fun NavigationScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        LocalizedLabel(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        LocalizedLabel(poi.address, color = mutedColor, fontSize = 11.sp, maxLines = 1)
+                                        androidx.compose.material3.Text(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        androidx.compose.material3.Text(poi.address, color = mutedColor, fontSize = 11.sp, maxLines = 1)
                                     }
                                     LocalizedLabel("%.1f km".format(poi.distanceKm), color = accent, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                                 }
@@ -849,7 +890,7 @@ fun NavigationScreen(
                 contentColor = accent,
                 modifier = Modifier.size(52.dp)
             ) {
-                Icon(Icons.Default.MyLocation, contentDescription = "Recenter GPS", modifier = Modifier.size(24.dp))
+                Icon(Icons.Default.MyLocation, contentDescription = com.openlauncher.app.ui.components.AppLocalization.translate("Recenter GPS", com.openlauncher.app.ui.components.LocalAppLanguage.current), modifier = Modifier.size(24.dp))
             }
         }
 
@@ -887,7 +928,7 @@ fun NavigationScreen(
                             ) {
                                 Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        LocalizedLabel(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        androidx.compose.material3.Text(poi.name, color = textColor, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                         LocalizedLabel("${poi.category} • ${poi.address}", color = mutedColor, fontSize = 11.sp, maxLines = 1)
                                     }
                                     LocalizedLabel("%.1f km".format(poi.distanceKm), color = accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -1227,11 +1268,14 @@ private fun MapboxFullInteractiveMap(
     val latestMapErrorCallback = rememberUpdatedState(onMapLoadError)
 
     val context = LocalContext.current
+    val hostingLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    val mapLifecycleOwner = remember { MapCompositionLifecycleOwner() }
     val mapView = remember {
         // The Maps SDK needs its access token configured before MapView is created.
         // Reuse the existing Gradle-provided resource; do not duplicate the token.
         MapboxOptions.accessToken = context.getString(com.openlauncher.app.R.string.mapbox_access_token)
         MapView(context).apply {
+            setViewTreeLifecycleOwner(mapLifecycleOwner)
             this.location.setLocationProvider(navigationLocationProvider)
             mapErrorSubscription = mapboxMap.subscribeMapLoadingError { error ->
                 latestMapErrorCallback.value("${error.type}: ${error.message}")
@@ -1283,8 +1327,13 @@ private fun MapboxFullInteractiveMap(
         }
     }
 
-    DisposableEffect(mapView) {
-        mapView.onStart()
+    DisposableEffect(mapView, hostingLifecycle) {
+        // The SDK observes this per-composition owner, including disposal before Activity destruction.
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            mapLifecycleOwner.registry.currentState = hostingLifecycle.currentState
+        }
+        hostingLifecycle.addObserver(observer)
+        mapLifecycleOwner.registry.currentState = hostingLifecycle.currentState
         OfflineRouteEngine.attachMap(navigationLocationProvider) { matcherResult ->
             viewportDataSource?.onLocationChanged(matcherResult.enhancedLocation)
             viewportDataSource?.evaluate()
@@ -1293,8 +1342,8 @@ private fun MapboxFullInteractiveMap(
         onDispose {
             OfflineRouteEngine.detachMap(navigationLocationProvider)
             mapErrorSubscription?.cancel()
-            mapView.onStop()
-            mapView.onDestroy()
+            hostingLifecycle.removeObserver(observer)
+            mapLifecycleOwner.registry.currentState = androidx.lifecycle.Lifecycle.State.DESTROYED
         }
     }
 
@@ -1517,4 +1566,9 @@ private fun savedPlaceMapGlyph(iconName: String): String = when (iconName.upperc
     "HEART" -> "♥"
     "PIN" -> "📍"
     else -> "★"
+}
+
+private class MapCompositionLifecycleOwner : androidx.lifecycle.LifecycleOwner {
+    val registry = androidx.lifecycle.LifecycleRegistry(this)
+    override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
 }

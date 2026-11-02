@@ -1,0 +1,15 @@
+{
+  "apk": "C:\\Users\\lafor\\AndroidStudioProjects\\MyCarLauncher\\outputs\\radio-integration\\MyCarLauncher-0.1.2-radio-test.apk",
+  "bytes": 170847655,
+  "sha256": "ca1c68841d23545166d9ad51c8c0774eec09c0050cd0cdc396dbbff21a80b20e",
+  "signing": "Existing local Android debug key; not a platform/system signature",
+  "releaseBuild": "success",
+  "unitTests": 42,
+  "testFailures": 0,
+  "testErrors": 0,
+  "lintErrors": 0,
+  "lintWarnings": 84,
+  "tokensUnchanged": true,
+  "headUnitTested": false,
+  "visualRuntimeTested": false
+}

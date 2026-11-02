@@ -54,7 +54,7 @@ import com.openlauncher.app.ui.widget.*
 import java.util.Calendar
 import com.openlauncher.app.util.LocationData
 
-private val WIDGET_RADIUS = RoundedCornerShape(20.dp)
+private val WIDGET_RADIUS = RoundedCornerShape(28.dp)
 
 private data class WidgetTypeInfo(
     val id: String,
@@ -165,14 +165,14 @@ fun HomeScreen(
     onSetAppShortcutIcon: (Int, DefaultShortcutIcon?) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    val accent       = Color(settings.accentColor)
-    val cardSurface  = Color(settings.cardSurfaceColor)
-    val cardBorder   = Color(settings.cardBorderColor)
-    val gap          = 6.dp
+    val accent       = MaterialTheme.colorScheme.primary
+    val cardSurface  = MaterialTheme.colorScheme.surface
+    val cardBorder   = Color.Transparent
+    val gap          = 8.dp
     val hasWallpaper = settings.wallpaperUri.isNotEmpty()
     val widgetBg     = when {
         isDayMode    -> Color(0xFFFFFFFF)
-        hasWallpaper -> cardSurface.copy(alpha = 0.85f)
+        hasWallpaper -> cardSurface
         else         -> cardSurface
     }
     val widgetBorder = when {
@@ -202,13 +202,6 @@ fun HomeScreen(
                 .padding(horizontal = 20.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            LocalizedLabel(
-                text          = settings.vehicleName.uppercase(),
-                style         = MaterialTheme.typography.titleLarge,
-                color         = headerTextColor,
-                letterSpacing = 3.sp,
-                fontSize      = 14.sp
-            )
             Spacer(Modifier.weight(1f))
             AnimatedVisibility(visible = isWifi, enter = fadeIn(), exit = fadeOut()) {
                 Icon(Icons.Default.Wifi, "WiFi", tint = statusIconColor, modifier = Modifier.size(16.dp))
@@ -222,26 +215,26 @@ fun HomeScreen(
                 if (editMode) {
                     IconButton(
                         onClick  = { widgetLibraryOpen = true },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(48.dp)
                     ) {
                         Icon(
                             imageVector        = Icons.Default.Dashboard,
                             contentDescription = "Widget library",
                             tint               = controlIconColor,
-                            modifier           = Modifier.size(15.dp)
+                            modifier           = Modifier.size(24.dp)
                         )
                     }
                     Spacer(Modifier.width(2.dp))
                 }
                 IconButton(
                     onClick  = { editMode = !editMode },
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(48.dp)
                 ) {
                     Icon(
                         imageVector        = Icons.Default.Edit,
-                        contentDescription = "Edit widgets",
+                        contentDescription = com.openlauncher.app.ui.components.AppLocalization.translate("Edit widgets", com.openlauncher.app.ui.components.LocalAppLanguage.current),
                         tint               = if (editMode) accent else controlIconColor,
-                        modifier           = Modifier.size(15.dp)
+                        modifier           = Modifier.size(24.dp)
                     )
                 }
             }
@@ -673,9 +666,9 @@ private fun WidgetContextMenu(
     Dialog(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(28.dp))
                 .background(menuBg)
-                .border(1.dp, menuBorder, RoundedCornerShape(20.dp))
+                .border(1.dp, menuBorder, RoundedCornerShape(28.dp))
                 .padding(vertical = 4.dp)
                 .width(200.dp)
         ) {

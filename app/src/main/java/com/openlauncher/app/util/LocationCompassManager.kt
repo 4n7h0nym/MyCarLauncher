@@ -35,6 +35,16 @@ class LocationCompassManager(context: Context) {
 
     private val gravity      = FloatArray(3)
     private val geomagnetic  = FloatArray(3)
+    // Reuse sensor math buffers. onSensorChanged runs frequently; allocating
+    // these arrays for every accelerometer/magnetometer event creates avoidable
+    // garbage collection pressure on low-memory head units.
+    private val rotationMatrix = FloatArray(9)
+    private val inclinationMatrix = FloatArray(9)
+    private val orientation = FloatArray(3)
+    private var accelerometerRegistered = false
+    private var magnetometerRegistered = false
+    private var gpsRegistered = false
+    private var networkRegistered = false
     // Circular low-pass filter for smooth bearing (avoids 0°/360° wrap artifacts)
     private var bearingSin   = 0f
     private var bearingCos   = 1f   // initial: pointing north
@@ -50,11 +60,8 @@ class LocationCompassManager(context: Context) {
                     System.arraycopy(event.values, 0, geomagnetic, 0, 3)
                 }
             }
-            val r = FloatArray(9)
-            val i = FloatArray(9)
-            if (SensorManager.getRotationMatrix(r, i, gravity, geomagnetic)) {
-                val orientation = FloatArray(3)
-                SensorManager.getOrientation(r, orientation)
+            if (SensorManager.getRotationMatrix(rotationMatrix, inclinationMatrix, gravity, geomagnetic)) {
+                SensorManager.getOrientation(rotationMatrix, orientation)
                 val azimuthRad = orientation[0].toDouble()
                 // Circular low-pass filter — correctly handles 0°/360° wrap-around
                 val alpha = 0.10f
@@ -107,43 +114,63 @@ class LocationCompassManager(context: Context) {
     }
 
     fun start() {
-        // Sensors
+        // Each source is tracked independently so repeated lifecycle/onboarding
+        // starts do not duplicate listeners, while a missing permission can be
+        // retried later without stopping sources that already started.
         sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-            sensorManager.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI)
+            if (!accelerometerRegistered) {
+                accelerometerRegistered = sensorManager.registerListener(
+                    sensorListener, it, SensorManager.SENSOR_DELAY_UI
+                )
+            }
         }
         sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)?.let {
-            sensorManager.registerListener(sensorListener, it, SensorManager.SENSOR_DELAY_UI)
+            if (!magnetometerRegistered) {
+                magnetometerRegistered = sensorManager.registerListener(
+                    sensorListener, it, SensorManager.SENSOR_DELAY_UI
+                )
+            }
         }
 
         // Location — Robust offline-first registration
         // GPS Provider (Works 100% offline, sat-based)
         try {
-            if (locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
+            if (!gpsRegistered && locationManager.allProviders.contains(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER, 3000L, 5f, locationListener
                 )
+                gpsRegistered = true
                 locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)?.let {
                     locationListener.onLocationChanged(it)
                 }
             }
+        } catch (_: SecurityException) {
+            // Permission can be revoked while the launcher is stopped; retry on start.
         } catch (_: Exception) {}
 
         // Network Provider (Works online, cell/wifi-based)
         try {
-            if (locationManager.allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
+            if (!networkRegistered && locationManager.allProviders.contains(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER, 5000L, 10f, locationListener
                 )
+                networkRegistered = true
                 locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)?.let {
                     locationListener.onLocationChanged(it)
                 }
             }
+        } catch (_: SecurityException) {
+            // Permission can be revoked while the launcher is stopped; retry on start.
         } catch (_: Exception) {}
     }
 
     fun stop() {
         sensorManager.unregisterListener(sensorListener)
+        accelerometerRegistered = false
+        magnetometerRegistered = false
         locationManager.removeUpdates(locationListener)
+        gpsRegistered = false
+        networkRegistered = false
         lastLocationForBearing = null
     }
 }

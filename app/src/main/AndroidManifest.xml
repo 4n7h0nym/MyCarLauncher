@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Location and sensors improve navigation but are not required to install
          or use the launcher on devices that do not have this hardware. -->
@@ -8,8 +8,16 @@
     <uses-feature android:name="android.hardware.sensor.compass" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />
 
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <!-- Optional OEM radio permissions: declared for an authorized system installation.
+         Ordinary sideloads do not gain these privileges from the declarations. -->
+    <uses-permission android:name="android.permission.ACCESS_FM_RADIO" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.ACCESS_BROADCAST_RADIO" tools:ignore="ProtectedPermissions" />
+
     <!-- Network for weather API & Mapbox Maps/Navigation -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
@@ -39,7 +47,8 @@
     <uses-permission android:name="android.permission.BODY_SENSORS" />
 
     <!-- Media session control -->
-    <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL" />
+    <!-- Optional on OEM/system installs; ordinary installs use the notification listener. -->
+    <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- External storage permissions for Mapbox tile caching / offline storage -->
@@ -48,10 +57,13 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <!-- Query all packages required on API 30+ for getInstalledApplications -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- A launcher lists all installed apps, including OEM companions without launcher activities. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
     <queries>
+        <package android:name="com.jancar.radio" />
         <package android:name="com.jancar.btservice" />
+        <package android:name="com.jancar.services" />
         <!-- Optional OEM PBAP providers used by selected car head units. -->
         <provider android:authorities="bt_contacts" />
         <provider android:authorities="com.android.bluetooth.pbap" />
@@ -111,6 +123,17 @@
             android:name=".service.MediaListenerService"
             android:exported="true"
             android:label="Open Launcher Media"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- Notification listener service for Bluetooth messages & notifications -->
+        <service
+            android:name=".service.CarMessageService"
+            android:exported="true"
+            android:label="Open Launcher Messages"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
             <intent-filter>
                 <action android:name="android.service.notification.NotificationListenerService" />

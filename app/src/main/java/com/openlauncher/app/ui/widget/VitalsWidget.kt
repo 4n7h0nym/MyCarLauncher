@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import androidx.lifecycle.repeatOnLifecycle
 import java.io.File
 
 @Composable
@@ -38,16 +39,16 @@ fun VitalsWidget(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val labelColor = if (isDayMode) Color(0xFF666666) else androidx.compose.material3.MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f)
 
-    var cpuUsage by remember { mutableFloatStateOf(20f) }
-    var ramUsedPercent by remember { mutableFloatStateOf(45f) }
+    var cpuUsage by remember { mutableFloatStateOf(-1f) }
+    var ramUsedPercent by remember { mutableFloatStateOf(-1f) }
     var ramDisplayGb by remember { mutableStateOf("0.0G") }
-    var temperature by remember { mutableFloatStateOf(35f) }
+    var temperature by remember { mutableFloatStateOf(-1f) }
 
     // CPU Stat Tracking variables
-    var lastCpuTime by remember { mutableLongStateOf(0L) }
-    var lastIdleTime by remember { mutableLongStateOf(0L) }
+    var previousCpuTimes by remember { mutableStateOf<com.openlauncher.app.util.CpuTimes?>(null) }
 
     // Temperature tracking helper (Thermal files -> Battery fallback)
     val getCpuTemp = {
@@ -86,7 +87,7 @@ fun VitalsWidget(
             } catch (_: Exception) {}
         }
         
-        if (foundTemp != -1f) foundTemp else 38f // global default fallback
+        foundTemp // Unknown readings are displayed as a dash, never a simulated temperature.
     }
 
     // Process RAM telemetry
@@ -103,58 +104,24 @@ fun VitalsWidget(
             ramUsedPercent = ((usedGb / totalGb) * 100f).toFloat().coerceIn(0f, 100f)
             ramDisplayGb = "%.1fG".format(usedGb)
         } catch (_: Exception) {
-            ramUsedPercent = 50f
+            ramUsedPercent = -1f
             ramDisplayGb = "—"
         }
     }
 
     // Process CPU telemetry
     val updateCpu = {
-        try {
-            var updated = false
-            val file = File("/proc/stat")
-            if (file.exists() && file.canRead()) {
-                val line = file.useLines { it.firstOrNull() }
-                if (line != null && line.startsWith("cpu ")) {
-                    val parts = line.split("\\s+".toRegex())
-                    if (parts.size >= 5) {
-                        val user = parts[1].toLong()
-                        val nice = parts[2].toLong()
-                        val system = parts[3].toLong()
-                        val idle = parts[4].toLong()
-                        val ioWait = if (parts.size > 5) parts[5].toLong() else 0L
-                        val irq = if (parts.size > 6) parts[6].toLong() else 0L
-                        val softIrq = if (parts.size > 7) parts[7].toLong() else 0L
- 
-                        val active = user + nice + system + ioWait + irq + softIrq
-                        val total = active + idle
-
-                        val deltaTotal = total - (lastCpuTime + lastIdleTime)
-                        val deltaIdle = idle - lastIdleTime
-
-                        lastCpuTime = active
-                        lastIdleTime = idle
-
-                        if (deltaTotal > 0) {
-                            cpuUsage = (((deltaTotal - deltaIdle).toFloat() / deltaTotal.toFloat()) * 100f).coerceIn(0f, 100f)
-                            updated = true
-                        }
-                    }
-                }
-            }
-            if (!updated) {
-                // Android 8+ SELinux fallback: realistic organic load generator using active threads & mathematical noise
-                val activeThreads = Thread.activeCount().coerceIn(10, 150)
-                val baseLoad = (activeThreads / 150f) * 35f
-                val noise = (Math.sin(System.currentTimeMillis() / 4000.0) * 12.0).toFloat()
-                cpuUsage = (baseLoad + 20f + noise).coerceIn(5f, 95f)
-            }
-        } catch (_: Exception) {}
+        val counters = runCatching {
+            File("/proc/stat").useLines { com.openlauncher.app.util.CpuTimes.parse(it.firstOrNull()) }
+        }.getOrNull()
+        cpuUsage = counters?.usageSince(previousCpuTimes) ?: -1f
+        previousCpuTimes = counters
     }
 
     // Periodic polling loop — the /proc and /sys reads are file I/O, so they
     // run on the IO dispatcher instead of blocking the main thread every tick
-    LaunchedEffect(Unit) {
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
         while (true) {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 updateCpu()
@@ -162,6 +129,7 @@ fun VitalsWidget(
                 temperature = getCpuTemp()
             }
             delay(2500)
+        }
         }
     }
 
@@ -182,7 +150,7 @@ fun VitalsWidget(
                 BarGauge(
                     value = cpuUsage,
                     label = "CPU",
-                    displayValue = "%.0f%%".format(cpuUsage),
+                    displayValue = if (cpuUsage >= 0f) "%.0f%%".format(cpuUsage) else "—",
                     activeColor = cpuColor,
                     isDayMode = isDayMode,
                     modifier = Modifier.fillMaxWidth()
@@ -198,7 +166,7 @@ fun VitalsWidget(
                 BarGauge(
                     value = temperature,
                     label = "TEMP",
-                    displayValue = "%.0f°".format(temperature),
+                    displayValue = if (temperature >= 0f) "%.0f°".format(temperature) else "—",
                     activeColor = tempColor,
                     isDayMode = isDayMode,
                     modifier = Modifier.fillMaxWidth()
@@ -213,7 +181,7 @@ fun VitalsWidget(
                 DialGauge(
                     value = cpuUsage,
                     label = "CPU",
-                    displayValue = "%.0f%%".format(cpuUsage),
+                    displayValue = if (cpuUsage >= 0f) "%.0f%%".format(cpuUsage) else "—",
                     activeColor = cpuColor,
                     isDayMode = isDayMode,
                     modifier = Modifier.weight(1f).fillMaxHeight()
@@ -231,7 +199,7 @@ fun VitalsWidget(
                 DialGauge(
                     value = temperature,
                     label = "TEMP",
-                    displayValue = "%.0f°".format(temperature),
+                    displayValue = if (temperature >= 0f) "%.0f°".format(temperature) else "—",
                     activeColor = tempColor,
                     isDayMode = isDayMode,
                     modifier = Modifier.weight(1f).fillMaxHeight()

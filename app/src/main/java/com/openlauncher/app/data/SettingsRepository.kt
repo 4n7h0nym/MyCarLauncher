@@ -10,6 +10,8 @@ import com.openlauncher.app.model.SavedPlace
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.Dispatchers
 import java.io.IOException
 
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "launcher_settings")
@@ -19,6 +21,10 @@ class SettingsRepository(private val context: Context) {
     private val gson = Gson()
 
     private object Keys {
+        val VISUAL_THEME = stringPreferencesKey("visual_theme")
+        val ALBUM_ACCENT = booleanPreferencesKey("album_accent")
+        val WALLPAPER_BLUR = floatPreferencesKey("wallpaper_blur")
+        val DOCK_FAVORITE = intPreferencesKey("dock_favorite")
         val VEHICLE_NAME       = stringPreferencesKey("vehicle_name")
         val ACCENT_COLOR       = intPreferencesKey("accent_color")
         val BG_COLOR           = intPreferencesKey("bg_color")
@@ -65,6 +71,7 @@ class SettingsRepository(private val context: Context) {
         val CARD_SURFACE_COLOR    = intPreferencesKey("card_surface_color")
         val CARD_BORDER_COLOR     = intPreferencesKey("card_border_color")
         val TEXT_MUTED_COLOR      = intPreferencesKey("text_muted_color")
+        val BUTTON_COLOR          = intPreferencesKey("button_color")
         val SHOW_CLOCK_WEATHER    = booleanPreferencesKey("show_clock_weather")
         val ANNOUNCE_INCOMING_MESSAGES = booleanPreferencesKey("announce_incoming_messages")
         val SHOW_PHONE_FAVORITES = booleanPreferencesKey("show_phone_favorites_widget")
@@ -83,6 +90,7 @@ class SettingsRepository(private val context: Context) {
     val settingsFlow: Flow<AppSettings> = context.dataStore.data
         .catch { e -> if (e is IOException) emit(emptyPreferences()) else throw e }
         .map { prefs -> readSettings(prefs) }
+        .flowOn(Dispatchers.Default)
 
     private fun readSettings(prefs: Preferences): AppSettings {
             val defaults = AppSettings()
@@ -124,6 +132,10 @@ class SettingsRepository(private val context: Context) {
             } ?: defaults.favoritePhoneNumbers
 
             return AppSettings(
+                visualTheme = prefs[Keys.VISUAL_THEME]?.let { runCatching { VisualTheme.valueOf(it) }.getOrNull() } ?: defaults.visualTheme,
+                albumAccent = prefs[Keys.ALBUM_ACCENT] ?: false,
+                wallpaperBlur = (prefs[Keys.WALLPAPER_BLUR] ?: 0f).coerceIn(0f, 24f),
+                dockFavoriteSlot = (prefs[Keys.DOCK_FAVORITE] ?: -1).coerceIn(-1, 3),
                 appLanguage = prefs[Keys.APP_LANGUAGE]?.let { runCatching { AppLanguage.valueOf(it) }.getOrNull() } ?: defaults.appLanguage,
                 launchAtBoot = prefs[Keys.LAUNCH_AT_BOOT] ?: defaults.launchAtBoot,
                 restoreLastPage = prefs[Keys.RESTORE_LAST_PAGE] ?: defaults.restoreLastPage,
@@ -145,7 +157,7 @@ class SettingsRepository(private val context: Context) {
                 uiScale        = prefs[Keys.UI_SCALE]         ?: defaults.uiScale,
                 clockStyle     = prefs[Keys.CLOCK_STYLE]?.let { runCatching { ClockStyle.valueOf(it) }.getOrNull() } ?: defaults.clockStyle,
                 unitSystem     = prefs[Keys.UNIT_SYSTEM]?.let { runCatching { UnitSystem.valueOf(it) }.getOrNull() } ?: defaults.unitSystem,
-                appFont        = prefs[Keys.APP_FONT]?.let { runCatching { AppFont.valueOf(it) }.getOrNull() } ?: defaults.appFont,
+                appFont        = if (prefs[Keys.VISUAL_THEME] == null) AppFont.SYSTEM else prefs[Keys.APP_FONT]?.let { runCatching { AppFont.valueOf(it) }.getOrNull() } ?: defaults.appFont,
                 showWeather    = prefs[Keys.SHOW_WEATHER]     ?: defaults.showWeather,
                 showClock      = prefs[Keys.SHOW_CLOCK]       ?: defaults.showClock,
                 showTelemetry  = prefs[Keys.SHOW_TELEMETRY]   ?: defaults.showTelemetry,
@@ -185,6 +197,7 @@ class SettingsRepository(private val context: Context) {
                 cardSurfaceColor = prefs[Keys.CARD_SURFACE_COLOR] ?: defaults.cardSurfaceColor,
                 cardBorderColor  = prefs[Keys.CARD_BORDER_COLOR]  ?: defaults.cardBorderColor,
                 textMutedColor   = prefs[Keys.TEXT_MUTED_COLOR]   ?: defaults.textMutedColor,
+                buttonColor      = prefs[Keys.BUTTON_COLOR]       ?: defaults.buttonColor,
                 showClockWeather = prefs[Keys.SHOW_CLOCK_WEATHER] ?: defaults.showClockWeather,
                 announceIncomingMessages = prefs[Keys.ANNOUNCE_INCOMING_MESSAGES] ?: defaults.announceIncomingMessages,
                 showPhoneFavorites = prefs[Keys.SHOW_PHONE_FAVORITES] ?: defaults.showPhoneFavorites,
@@ -210,7 +223,8 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.LAST_DESTINATION] = s.lastDestination
             prefs[Keys.STEERING_BINDINGS_JSON] = gson.toJson(s.steeringWheelBindings)
             context.getSharedPreferences("launcher_runtime", Context.MODE_PRIVATE)
-                .edit().putBoolean("launch_at_boot", s.launchAtBoot).apply()
+                .edit().putBoolean("launch_at_boot", s.launchAtBoot)
+                .putString("last_active_destination", if (s.restoreLastPage) s.lastDestination else "HOME").apply()
             prefs[Keys.APP_LANGUAGE]      = s.appLanguage.name
             prefs[Keys.VEHICLE_NAME]       = s.vehicleName
             prefs[Keys.ACCENT_COLOR]       = s.accentColor
@@ -222,6 +236,10 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.UI_SCALE]           = s.uiScale
             prefs[Keys.CLOCK_STYLE]        = s.clockStyle.name
             prefs[Keys.UNIT_SYSTEM]        = s.unitSystem.name
+            prefs[Keys.VISUAL_THEME] = s.visualTheme.name
+            prefs[Keys.ALBUM_ACCENT] = s.albumAccent
+            prefs[Keys.WALLPAPER_BLUR] = s.wallpaperBlur
+            prefs[Keys.DOCK_FAVORITE] = s.dockFavoriteSlot
             prefs[Keys.APP_FONT]           = s.appFont.name
             prefs[Keys.SHOW_WEATHER]       = s.showWeather
             prefs[Keys.SHOW_CLOCK]         = s.showClock
@@ -257,6 +275,7 @@ class SettingsRepository(private val context: Context) {
             prefs[Keys.CARD_SURFACE_COLOR] = s.cardSurfaceColor
             prefs[Keys.CARD_BORDER_COLOR]  = s.cardBorderColor
             prefs[Keys.TEXT_MUTED_COLOR]   = s.textMutedColor
+            prefs[Keys.BUTTON_COLOR]       = s.buttonColor
             prefs[Keys.SHOW_CLOCK_WEATHER] = s.showClockWeather
             prefs[Keys.ANNOUNCE_INCOMING_MESSAGES] = s.announceIncomingMessages
             prefs[Keys.SHOW_PHONE_FAVORITES] = s.showPhoneFavorites
@@ -267,6 +286,6 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun resetToDefaults() {
         context.dataStore.edit { it.clear() }
-        context.getSharedPreferences("launcher_runtime", Context.MODE_PRIVATE).edit().remove("launch_at_boot").apply()
+        context.getSharedPreferences("launcher_runtime", Context.MODE_PRIVATE).edit().remove("launch_at_boot").remove("last_active_destination").apply()
     }
 }

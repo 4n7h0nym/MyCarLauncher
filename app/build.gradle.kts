@@ -13,8 +13,8 @@ android {
         applicationId = "com.openlauncher.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.0.5"
+        versionCode = 8
+        versionName = "0.1.2"
         // Mapbox mobile SDKs require a public (pk.*) token. Supply it through
         // -PMAPBOX_ACCESS_TOKEN=... or the MAPBOX_ACCESS_TOKEN environment variable.
         resValue(
@@ -51,6 +51,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     // Keep native libraries uncompressed and 16 KB ZIP-aligned in APKs/AABs.
@@ -107,18 +108,18 @@ dependencies {
 
     // Mapbox SDKs (Maps & Search SDK)
     // -------------------------------------------------------------------------
-    // 1. Mapbox Maps SDK & Compose Extensions
+    // Mapbox MapView SDK (the map UI uses AndroidView, not maps-compose)
     implementation("com.mapbox.maps:android-ndk27:11.14.0")
-    implementation("com.mapbox.extension:maps-compose-ndk27:11.14.0")
 
-    // 2. Mapbox Search SDK (Autofill, POI, Category search)
-    implementation("com.mapbox.search:mapbox-search-android-ui-ndk27:2.14.0")
-    implementation("com.mapbox.search:autofill-ndk27:2.14.0")
+    // Place search uses HTTP APIs in NavigationViewModel; no Search SDK needed.
 
     // Route generation also works without a network connection when routing
     // tiles are included in the downloaded TileStore regions.
     implementation("com.mapbox.navigationcore:navigation-ndk27:3.11.0")
     implementation("com.mapbox.navigationcore:ui-maps-ndk27:3.11.0")
+
+    // JVM regression tests only; no dependency added to the APK.
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

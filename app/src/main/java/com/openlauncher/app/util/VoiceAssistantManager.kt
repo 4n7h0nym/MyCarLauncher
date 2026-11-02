@@ -9,6 +9,7 @@ import android.speech.SpeechRecognizer
 
 class VoiceAssistantManager(context: Context) {
     private val appContext = context.applicationContext
+    private var tone: android.media.ToneGenerator? = null
     private var recognizer: SpeechRecognizer? = null
 
     fun isServiceAvailable(): Boolean = runCatching {
@@ -17,6 +18,7 @@ class VoiceAssistantManager(context: Context) {
 
     fun listen(
         languageTag: String = "fr-CA",
+        onReady: () -> Unit = {},
         onPartial: (String) -> Unit,
         onFinal: (String) -> Unit,
         onFailure: (String) -> Unit
@@ -33,7 +35,14 @@ class VoiceAssistantManager(context: Context) {
             }
         recognizer = speechRecognizer
         speechRecognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onReadyForSpeech(params: Bundle?) {
+                if(recognizer !== speechRecognizer) return
+                runCatching {
+                    tone=android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC,35)
+                    tone?.startTone(android.media.ToneGenerator.TONE_PROP_BEEP,120)
+                }
+                onReady()
+            }
             override fun onBeginningOfSpeech() = Unit
             override fun onRmsChanged(rmsdB: Float) = Unit
             override fun onBufferReceived(buffer: ByteArray?) = Unit
@@ -41,17 +50,21 @@ class VoiceAssistantManager(context: Context) {
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
             override fun onPartialResults(partialResults: Bundle?) {
+                if(recognizer !== speechRecognizer) return
                 partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()?.let(onPartial)
             }
 
             override fun onResults(results: Bundle?) {
+                if(recognizer !== speechRecognizer) return
                 val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                if (text.isNullOrBlank()) onFailure(if (languageTag.startsWith("en")) "I didn't understand the command." else "Je n’ai pas compris la commande.") else onFinal(text)
                 stop()
+                if (text.isNullOrBlank()) onFailure(if (languageTag.startsWith("en")) "I didn't understand the command." else "Je n’ai pas compris la commande.") else onFinal(text)
             }
 
             override fun onError(error: Int) {
+                if(recognizer !== speechRecognizer) return
+                stop()
                 onFailure(
                     if (languageTag.startsWith("en")) when (error) {
                         SpeechRecognizer.ERROR_NO_MATCH -> "I didn't understand. Try again."
@@ -78,6 +91,7 @@ class VoiceAssistantManager(context: Context) {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, appContext.packageName)
+            putExtra("android.speech.extra.PREFER_OFFLINE", true)
         }
         runCatching { speechRecognizer.startListening(intent) }
             .onFailure {
@@ -86,7 +100,10 @@ class VoiceAssistantManager(context: Context) {
     }
 
     fun stop() {
-        recognizer?.let {
+        tone?.release(); tone=null
+        val previous=recognizer
+        recognizer=null
+        previous?.let {
             runCatching { it.cancel() }
             runCatching { it.destroy() }
         }

@@ -24,6 +24,7 @@ import com.openlauncher.app.data.GRID_COLS
 import com.openlauncher.app.data.GRID_ROWS
 import com.openlauncher.app.data.SettingsRepository
 import com.openlauncher.app.data.JancarBluetoothManager
+import com.openlauncher.app.data.JancarRadioManager
 import com.openlauncher.app.data.ShortcutConfig
 import com.openlauncher.app.data.SoundPadConfig
 import com.openlauncher.app.data.WeatherApi
@@ -74,6 +75,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     private var lastJancarKeyAtMs = 0L
 
     private val _triggerVoiceAssistant = MutableSharedFlow<Unit>()
+    fun requestVoiceAssistant() { viewModelScope.launch { _triggerVoiceAssistant.emit(Unit) } }
     val triggerVoiceAssistant: SharedFlow<Unit> = _triggerVoiceAssistant
 
     fun navigate(dest: NavDestination) {
@@ -83,8 +85,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    private var destinationRestored = false
     fun restoreLastDestination(name: String) {
-        _nav.value = runCatching { NavDestination.valueOf(name) }.getOrDefault(NavDestination.HOME)
+        if (destinationRestored) return
+        destinationRestored = true
+        _nav.value = com.openlauncher.app.util.restoredDestination(settings.value.restoreLastPage, name)
     }
 
     fun requestSteeringKeyCapture(action: SteeringWheelAction?, isLongPress: Boolean = false) {
@@ -300,9 +305,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val active    = resized.filter { it.enabled && it.id in activeIds }
             val inactive  = resized.filter { !it.enabled || it.id !in activeIds }
             val target    = active.find { it.id == id }
-            copy(widgetLayout = if (target != null)
-                computeWidgetMove(active, id, target.gridX, target.gridY) + inactive
-            else resized)
+            val resolved = if (target != null) computeWidgetMove(active, id, target.gridX, target.gridY) else active
+            val overlaps = resolved.any { a -> resolved.any { b -> a.id != b.id &&
+                a.gridX < b.gridX + b.spanX && a.gridX + a.spanX > b.gridX &&
+                a.gridY < b.gridY + b.spanY && a.gridY + a.spanY > b.gridY } }
+            if (overlaps) this else copy(widgetLayout = resolved + inactive)
         }
     }
 
@@ -447,8 +454,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun loadInstalledApps() {
         if (_appsLoading.value) return
+        _appsLoading.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            _appsLoading.value = true
             try {
                 val pm = getApplication<Application>().packageManager
 
@@ -479,18 +486,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun launchApp(packageName: String) {
         val app = getApplication<Application>()
-        val pm  = app.packageManager
-        // Try standard launch intent first; fall back to first ACTION_MAIN activity in package
-        val intent = pm.getLaunchIntentForPackage(packageName)
-            ?: pm.queryIntentActivities(
-                Intent(Intent.ACTION_MAIN).setPackage(packageName), 0
-            ).firstOrNull()?.activityInfo?.let { ai ->
-                Intent(Intent.ACTION_MAIN).apply {
-                    setClassName(ai.packageName, ai.name)
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-            }
-        intent?.let { app.startActivity(it) }
+        val launched = runCatching {
+            val pm = app.packageManager
+            val intent = pm.getLaunchIntentForPackage(packageName)
+                ?: pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).setPackage(packageName), 0)
+                    .firstOrNull { it.activityInfo.exported }?.activityInfo?.let { ai ->
+                        Intent(Intent.ACTION_MAIN).setClassName(ai.packageName, ai.name)
+                    }
+            requireNotNull(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            app.startActivity(intent)
+        }.isSuccess
+        if (!launched) {
+            val message = if (settings.value.appLanguage == com.openlauncher.app.data.AppLanguage.ENGLISH_CANADA)
+                "Unable to open this app. Check that it is installed and enabled."
+            else "Impossible d’ouvrir cette application. Vérifiez qu’elle est installée et activée."
+            android.widget.Toast.makeText(app, message, android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     // ── Now Playing ───────────────────────────────────────────────────────────
@@ -552,8 +563,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val audio = getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager ?: return
         val downTime = android.os.SystemClock.uptimeMillis()
         runCatching {
-            audio.dispatchMediaKeyEvent(android.view.KeyEvent(downTime, downTime, android.view.KeyEvent.ACTION_DOWN, keyCode, 0))
-            audio.dispatchMediaKeyEvent(android.view.KeyEvent(android.os.SystemClock.uptimeMillis(), downTime, android.view.KeyEvent.ACTION_UP, keyCode, 0))
+            val keyEventDown = android.view.KeyEvent(downTime, downTime, android.view.KeyEvent.ACTION_DOWN, keyCode, 0)
+            val keyEventUp = android.view.KeyEvent(android.os.SystemClock.uptimeMillis(), downTime, android.view.KeyEvent.ACTION_UP, keyCode, 0)
+            audio.dispatchMediaKeyEvent(keyEventDown)
+            audio.dispatchMediaKeyEvent(keyEventUp)
+
+            val intentDown = Intent(Intent.ACTION_MEDIA_BUTTON).apply { putExtra(Intent.EXTRA_KEY_EVENT, keyEventDown) }
+            getApplication<Application>().sendBroadcast(intentDown)
+            val intentUp = Intent(Intent.ACTION_MEDIA_BUTTON).apply { putExtra(Intent.EXTRA_KEY_EVENT, keyEventUp) }
+            getApplication<Application>().sendBroadcast(intentUp)
         }
     }
 
@@ -589,31 +607,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun skipNext() {
-        // On Jancar head units the vendor service targets the phone's A2DP
-        // session directly; the visible Android MediaSession may belong to a
-        // different player and ignore skip commands.
-        if (JancarBluetoothManager.isBound.value && JancarBluetoothManager.isA2dpConnected() &&
-            JancarBluetoothManager.nextBtMusic()
-        ) return
+        if (JancarBluetoothManager.isBound.value && JancarBluetoothManager.nextBtMusic()) return
         val sessionController = MediaListenerService.nowPlaying.value?.controller
-        if (sessionController != null) {
-            sessionController.transportControls?.skipToNext()
-            return
-        }
-        nowPlaying.value?.controller?.transportControls?.skipToNext()
-            ?: dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+        if (sessionController != null) sessionController.transportControls.skipToNext()
+        else dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+        MediaListenerService.requestRefresh()
     }
     fun skipPrev() {
-        if (JancarBluetoothManager.isBound.value && JancarBluetoothManager.isA2dpConnected() &&
-            JancarBluetoothManager.previousBtMusic()
-        ) return
+        if (JancarBluetoothManager.isBound.value && JancarBluetoothManager.previousBtMusic()) return
         val sessionController = MediaListenerService.nowPlaying.value?.controller
-        if (sessionController != null) {
-            sessionController.transportControls?.skipToPrevious()
-            return
-        }
-        nowPlaying.value?.controller?.transportControls?.skipToPrevious()
-            ?: dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        if (sessionController != null) sessionController.transportControls.skipToPrevious()
+        else dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+        MediaListenerService.requestRefresh()
     }
 
     // ── Weather ───────────────────────────────────────────────────────────────
@@ -624,15 +629,20 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val weatherError: StateFlow<String?> = _weatherError
 
     private var weatherJob: Job? = null
+    private var lastWeatherSuccess = 0L
+    private var lastWeatherAttempt = 0L
 
     fun fetchWeather(lat: Double, lon: Double, metric: Boolean) {
         weatherJob?.cancel()
+        lastWeatherAttempt = android.os.SystemClock.elapsedRealtime()
         weatherJob = viewModelScope.launch {
             try {
                 // Always request celsius — the state stores celsius and the widget
                 // converts for display, so requesting fahrenheit just round-tripped
                 // the value through two lossy conversions
-                val resp = WeatherApi.service.getForecast(lat, lon, temperatureUnit = "celsius")
+                val resp = withContext(Dispatchers.IO) {
+                    WeatherApi.service.getForecast(lat, lon, temperatureUnit = "celsius")
+                }
                 resp.currentWeather?.let { cw ->
                     _weather.value = WeatherState(
                         temperatureCelsius = cw.temperature,
@@ -641,9 +651,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                         isDay             = cw.isDay == 1
                     )
                 }
+                lastWeatherSuccess = android.os.SystemClock.elapsedRealtime()
                 _weatherError.value = null
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _weatherError.value = e.message
+                _weatherError.value = "Weather unavailable. Check the network connection."
             }
         }
     }
@@ -672,6 +685,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     fun stopLocationUpdates()  = locationMgr.stop()
 
     // ── Connectivity ──────────────────────────────────────────────────────────
+    private val networkManager = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: android.net.Network) = refreshConnectivity()
+        override fun onLost(network: android.net.Network) = refreshConnectivity()
+        override fun onCapabilitiesChanged(network: android.net.Network, caps: NetworkCapabilities) = refreshConnectivity()
+    }
+    private var networkCallbackRegistered = false
     private val _isWifi = MutableStateFlow(false)
     private val _isData = MutableStateFlow(false)
     val isWifi: StateFlow<Boolean> = _isWifi
@@ -693,8 +713,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         val band: String,
         val freq: String,
         val stationName: String? = null,
-        // Direct tuning + FM1/FM2/FM3/AM switching — vendor MCU backend only
-        val canTune: Boolean = false
+        // Direct tuning support and bands exposed by this radio backend.
+        val canTune: Boolean = false,
+        val isPowerOn: Boolean = true,
+        val supportedBands: List<String> = listOf("FM1", "FM2", "FM3", "AM", "SAT", "SXM", "DAB")
     ) {
         val display get() = "$band  $freq"
         val isAm    get() = band.equals("AM", ignoreCase = true)
@@ -808,10 +830,18 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         return HardwareRadioState(band = band, freq = rawFreq ?: "—", stationName = station, canTune = false)
     }
 
-    // MCU backend wins when present; otherwise mirror the radio app's session
+    // The MCU backend wins first, followed by Jancar's radio state or a generic MediaSession mirror
     val hardwareRadio: StateFlow<HardwareRadioState?> =
-        combine(_mcuRadio, nowPlaying, settings) { mcu, np, _ ->
-            mcu ?: np?.let { parseSessionRadio(it) }
+        combine(_mcuRadio, JancarRadioManager.radioState, nowPlaying, settings) { mcu, jr, np, _ ->
+            mcu ?: if (jr.isConnected) HardwareRadioState(
+                band = jr.band.ifBlank { "FM1" },
+                freq = if (jr.frequency <= 0f) "—" else if (jr.band.uppercase() == "AM") "%.0f".format(java.util.Locale.US, jr.frequency)
+                    else "%.1f".format(java.util.Locale.US, jr.frequency),
+                stationName = jr.stationName.ifBlank { null },
+                canTune = true,
+                isPowerOn = jr.isPowerOn,
+                supportedBands = listOf("FM", "AM")
+            ) else np?.takeIf { isRadioSessionPackage(it.controller?.packageName.orEmpty()) }?.let(::parseSessionRadio)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private fun radioSessionController() = nowPlaying.value?.controller?.takeIf { c ->
@@ -837,44 +867,73 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     // Checksum = low byte of sum of all preceding bytes.
     // Wrapped with 0x0d 0x08 sub-command prefix for MCU_CMD_DATA.
     fun radioTune(band: String, freqMhz: Float) {
-        if (!hasSzchoicewayMcu) return // direct tuning is MCU-only
-        val bandByte  = when (band) { "FM3" -> 0x03.toByte(); "AM" -> 0x04.toByte(); else -> 0x01.toByte() }
-        val bankStr   = if (band == "FM2") "02" else "01"
-        val freqStr   = if (band == "AM") String.format(java.util.Locale.US, "%.0f", freqMhz) else String.format(java.util.Locale.US, "%.1f", freqMhz)
-        val padding   = 9 - freqStr.length
-        val header    = byteArrayOf(0x5a.toByte(), 0xa5.toByte(), 0x0d.toByte())
-        val data      = byteArrayOf(0x91.toByte(), bandByte,
-                            bankStr[0].code.toByte(), bankStr[1].code.toByte()) +
-                        ByteArray(padding) +
-                        freqStr.map { it.code.toByte() }.toByteArray()
-        val frame     = header + data
-        val checksum  = (frame.sumOf { it.toInt() and 0xFF } and 0xFF).toByte()
-        val finalPayload = byteArrayOf(0x0d.toByte(), 0x08.toByte()) + frame + byteArrayOf(checksum)
-        sendMcuByteArray(finalPayload)
+        if (hasSzchoicewayMcu) {
+            val bandByte  = when (band) { "FM3" -> 0x03.toByte(); "AM" -> 0x04.toByte(); else -> 0x01.toByte() }
+            val bankStr   = if (band == "FM2") "02" else "01"
+            val freqStr   = if (band == "AM") String.format(java.util.Locale.US, "%.0f", freqMhz) else String.format(java.util.Locale.US, "%.1f", freqMhz)
+            val padding   = 9 - freqStr.length
+            val header    = byteArrayOf(0x5a.toByte(), 0xa5.toByte(), 0x0d.toByte())
+            val data      = byteArrayOf(0x91.toByte(), bandByte,
+                                bankStr[0].code.toByte(), bankStr[1].code.toByte()) +
+                            ByteArray(padding) +
+                            freqStr.map { it.code.toByte() }.toByteArray()
+            val frame     = header + data
+            val checksum  = (frame.sumOf { it.toInt() and 0xFF } and 0xFF).toByte()
+            val finalPayload = byteArrayOf(0x0d.toByte(), 0x08.toByte()) + frame + byteArrayOf(checksum)
+            sendMcuByteArray(finalPayload)
+        } else if (JancarRadioManager.isConnected) {
+            com.openlauncher.app.data.RadioManagerHelper.tune(band, freqMhz)
+        }
     }
 
     private val mcuActive get() = _mcuRadio.value != null
 
-    // Seek routes to the MCU when that backend is live, otherwise to the radio
-    // app's MediaSession — skip next/prev is how these apps expose seek.
-    fun radioSeekUp()   { if (mcuActive) sendMcuBytes(0x02, 0x0f) else radioSessionController()?.transportControls?.skipToNext() }
-    fun radioSeekDown() { if (mcuActive) sendMcuBytes(0x02, 0x0e) else radioSessionController()?.transportControls?.skipToPrevious() }
-    // Band switching and direct tuning only exist on the MCU backend
-    fun radioCycleFm()  { if (mcuActive) sendMcuBytes(0x02, 0x1e) }
-    fun radioSwitchAm() { if (mcuActive) sendMcuBytes(0x02, 0x1f) }
-    fun radioStart()    { sendMcuBytes(0x01, 0x01) }
-    fun radioStop()     { sendMcuBytes(0x01, 0x63) }
+    // Next/previous mirrors Jancar's native frequency-step behavior (200 kHz on FM).
+    fun radioSeekUp()   {
+        if (mcuActive) sendMcuBytes(0x02, 0x0f)
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.seek(true)
+        else radioSessionController()?.transportControls?.skipToNext()
+    }
+    fun radioSeekDown() {
+        if (mcuActive) sendMcuBytes(0x02, 0x0e)
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.seek(false)
+        else radioSessionController()?.transportControls?.skipToPrevious()
+    }
+    fun radioCycleFm()  {
+        if (mcuActive) sendMcuBytes(0x02, 0x1e)
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.band("FM")
+    }
+    fun radioSwitchAm() {
+        if (mcuActive) sendMcuBytes(0x02, 0x1f)
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.band("AM")
+    }
+    fun radioStart() {
+        if (mcuActive) sendMcuBytes(0x01, 0x01)
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.power(true)
+    }
+    fun radioStop() {
+        if (mcuActive) sendMcuBytes(0x01, 0x63)
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.power(false)
+    }
 
     fun stopHardwareRadioApp() {
         if (mcuActive) radioStop()
+        else if (JancarRadioManager.isConnected) com.openlauncher.app.data.RadioManagerHelper.power(false)
         else radioSessionController()?.transportControls?.pause()
     }
 
     fun launchHardwareRadioApp() {
-        if (hasSzchoicewayMcu) radioStart()
+        if (hasSzchoicewayMcu) {
+            radioStart()
+            return
+        }
+        if (JancarRadioManager.isConnected) {
+            radioStart()
+            return
+        }
         val pkg = settings.value.radioPackage.ifEmpty {
             when {
-                hasSzchoicewayMcu -> "com.szchoiceway.radio"
+                JancarRadioManager.isConnected -> "com.jancar.radio"
                 else              -> radioSessionController()?.packageName ?: ""
             }
         }
@@ -895,27 +954,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun refreshConnectivity() {
-        val cm = getApplication<Application>().getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val caps = cm.getNetworkCapabilities(cm.activeNetwork)
-            _isWifi.value = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-            _isData.value = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-        } else {
-            // activeNetwork requires API 23 — legacy path for Android 5.x head units
-            @Suppress("DEPRECATION")
-            val info = cm.activeNetworkInfo
-            @Suppress("DEPRECATION")
-            val connected = info?.isConnected == true
-            @Suppress("DEPRECATION")
-            val type = info?.type
-            _isWifi.value = connected && type == ConnectivityManager.TYPE_WIFI
-            _isData.value = connected && type == ConnectivityManager.TYPE_MOBILE
-        }
+        val caps = networkManager.getNetworkCapabilities(networkManager.activeNetwork)
+        _isWifi.value = caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        _isData.value = caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
     }
 
     override fun onCleared() {
         super.onCleared()
         locationMgr.stop()
+        if (networkCallbackRegistered) runCatching { networkManager.unregisterNetworkCallback(networkCallback) }
         radioObserver?.let { getApplication<Application>().contentResolver.unregisterContentObserver(it) }
         radioObserver = null
     }
@@ -923,18 +970,22 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     init {
         loadInstalledApps()
         refreshConnectivity()
+        networkCallbackRegistered = runCatching {
+            networkManager.registerNetworkCallback(android.net.NetworkRequest.Builder().build(), networkCallback)
+            true
+        }.getOrDefault(false)
         if (hasSzchoicewayMcu) startHardwareRadioObserver()
         // Fetch weather on first location fix, then every 30 minutes.
         // The minute ticker covers the parked case where no location updates arrive.
         viewModelScope.launch {
-            var lastFetchMs = 0L
             merge(
                 locationMgr.location.filterNotNull(),
                 minuteTicker.mapNotNull { locationMgr.location.value }
             ).collect { loc ->
-                val now = System.currentTimeMillis()
-                if (now - lastFetchMs >= 30 * 60 * 1_000L) {
-                    lastFetchMs = now
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (weatherJob?.isActive != true &&
+                    (lastWeatherSuccess == 0L || now - lastWeatherSuccess >= 30 * 60 * 1_000L) &&
+                    (lastWeatherAttempt == 0L || now - lastWeatherAttempt >= 60_000L)) {
                     fetchWeather(loc.latitude, loc.longitude, settings.value.unitSystem.name == "METRIC")
                 }
             }

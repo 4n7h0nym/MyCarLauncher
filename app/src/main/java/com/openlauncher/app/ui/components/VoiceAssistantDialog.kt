@@ -124,6 +124,10 @@ fun VoiceAssistantDialog(
         )
     }
 
+    LaunchedEffect(Unit) {
+        beginListening()
+    }
+
     DisposableEffect(manager) { onDispose { manager.close(); onListeningChange(false) } }
 
     Dialog(onDismissRequest = onDismiss) {

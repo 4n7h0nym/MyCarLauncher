@@ -94,7 +94,7 @@ fun SoundboardWidget(
                                     onClick = {
                                         if (pad.label == "+" || (pad.audioUri.isEmpty() && pad.synthType.isEmpty())) {
                                             assigningIndex = idx
-                                        } else {
+                                        } else if (activePadIndex == null) {
                                             activePadIndex = idx
                                             playSoundPad(
                                                 context = context,
@@ -383,16 +383,12 @@ private fun playSoundPad(context: android.content.Context, pad: SoundPadConfig, 
                     throw e
                 }
             } else {
-                var resName = pad.synthType.lowercase().trim()
-                var resId = context.resources.getIdentifier(resName, "raw", context.packageName)
-                if (resId == 0) {
-                    // Fallback mapping for legacy synth types saved in user settings
-                    resName = when (resName) {
-                        "horn", "beep", "alert" -> "mario_jump"
-                        "kick", "snare", "bass" -> "mario_coin"
-                        else -> "mario_jump"
-                    }
-                    resId = context.resources.getIdentifier(resName, "raw", context.packageName)
+                // Explicit references keep every bundled sound reachable by the release resource shrinker.
+                val resId = when (pad.synthType.lowercase(java.util.Locale.ROOT).trim()) {
+                    "mario_coin", "kick", "snare", "bass" -> com.openlauncher.app.R.raw.mario_coin
+                    "boom" -> com.openlauncher.app.R.raw.boom
+                    "loud_fart" -> com.openlauncher.app.R.raw.loud_fart
+                    else -> com.openlauncher.app.R.raw.mario_jump
                 }
                 if (resId != 0) {
                     val player = MediaPlayer.create(context, resId)

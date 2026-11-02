@@ -80,11 +80,11 @@ fun AppLibraryScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
+                .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            LocalizedLabel(
+            if (anyPickerMode) LocalizedLabel(
                 text          = when {
                     isCarPlayPickerMode -> carPlayPickerLabel
                     anyPickerMode       -> "CHOOSE APP"
@@ -108,7 +108,7 @@ fun AppLibraryScreen(
                                         AppFilter.SYSTEM -> "System"
                                         AppFilter.ALL    -> "All"
                                     },
-                                    fontSize = 9.sp,
+                                    fontSize = 12.sp,
                                     letterSpacing = 0.5.sp
                                 )
                             },
@@ -127,7 +127,7 @@ fun AppLibraryScreen(
                 contentAlignment = Alignment.CenterStart,
                 modifier = Modifier
                     .width(200.dp)
-                    .height(36.dp)
+                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(24.dp))
                     .border(1.dp, if (searchFocused) accent else fieldBorderU, RoundedCornerShape(24.dp))
                     .padding(horizontal = 10.dp)
@@ -172,7 +172,7 @@ fun AppLibraryScreen(
 
         // ── App grid ────────────────────────────────────────────────────────────
         LazyVerticalGrid(
-            columns               = GridCells.Fixed(6),
+            columns               = GridCells.Adaptive(minSize = 112.dp),
             contentPadding        = PaddingValues(6.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalArrangement   = Arrangement.spacedBy(4.dp),
@@ -215,7 +215,7 @@ private fun AppTile(
             .clickable(onClick = onClick)
             .padding(7.dp)
     ) {
-        val bmp = remember(app.packageName) {
+        val bmp = remember(app.packageName, app.icon) {
             try { app.icon.toBitmap(80, 80) } catch (_: Exception) { null }
         }
         if (bmp != null) {
@@ -230,15 +230,15 @@ private fun AppTile(
             }
         }
         Spacer(Modifier.height(4.dp))
-        LocalizedLabel(
-            text          = app.appName.uppercase(),
+        androidx.compose.material3.Text(
+            text          = app.appName,
             style         = MaterialTheme.typography.labelSmall,
             color         = if (isDayMode) Color(0xFF666666) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-            maxLines      = 1,
+            maxLines      = 2,
             overflow      = TextOverflow.Ellipsis,
             textAlign     = TextAlign.Center,
             letterSpacing = 1.sp,
-            fontSize      = 8.sp
+            fontSize      = 12.sp
         )
     }
 }

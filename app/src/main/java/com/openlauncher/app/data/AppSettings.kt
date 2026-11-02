@@ -5,6 +5,8 @@ import androidx.compose.ui.graphics.toArgb
 import com.openlauncher.app.model.MapboxLocationPoint
 import com.openlauncher.app.model.SavedPlace
 
+enum class VisualTheme { MATERIAL, OLED, DYNAMIC, CUSTOM }
+
 enum class ClockStyle { DIGITAL, ANALOG }
 enum class UnitSystem { METRIC, IMPERIAL }
 enum class AppFont { SYSTEM, JETBRAINS_MONO, SOURCE_CODE_PRO }
@@ -70,13 +72,13 @@ data class SteeringWheelBinding(
     val longPressAction: SteeringWheelAction? = null
 )
 
-fun defaultSavedPlaces() = listOf(
-    SavedPlace("home", "Domicile", "HOME", "Avenue des Champs-Élysées, Paris", MapboxLocationPoint(48.8698, 2.3075)),
-    SavedPlace("work", "Travail", "WORK", "La Défense, Paris", MapboxLocationPoint(48.8924, 2.2361)),
-    SavedPlace("fav_gym", "Salle de sport", "STAR", "Place de la Bastille, Paris", MapboxLocationPoint(48.8530, 2.3691))
-)
+fun defaultSavedPlaces(): List<SavedPlace> = emptyList()
 
 data class AppSettings(
+    val visualTheme: VisualTheme = VisualTheme.MATERIAL,
+    val albumAccent: Boolean = false,
+    val wallpaperBlur: Float = 0f,
+    val dockFavoriteSlot: Int = -1,
     val appLanguage: AppLanguage = AppLanguage.FRENCH_CANADA,
     val launchAtBoot: Boolean = true,
     val restoreLastPage: Boolean = true,
@@ -100,7 +102,7 @@ data class AppSettings(
     val uiScale: Float = 1.0f,
     val clockStyle: ClockStyle = ClockStyle.DIGITAL,
     val unitSystem: UnitSystem = UnitSystem.METRIC,
-    val appFont: AppFont = AppFont.JETBRAINS_MONO,
+    val appFont: AppFont = AppFont.SYSTEM,
     val showWeather: Boolean = true,
     val showClock: Boolean = true,
     val showTelemetry: Boolean = true,
@@ -134,6 +136,7 @@ data class AppSettings(
     val cardSurfaceColor: Int = Color(0xFF1E1E22).toArgb(),
     val cardBorderColor: Int = Color(0xFF2D2D35).toArgb(),
     val textMutedColor: Int = Color(0xFF9AA0A6).toArgb(),
+    val buttonColor: Int = Color(0xFF4285F4).toArgb(),
     val showClockWeather: Boolean = false,
     val showPhoneFavorites: Boolean = false,
     val showMessages: Boolean = false,
@@ -199,7 +202,7 @@ fun computeWidgetMove(
 
     for (w in displaced) {
         val pos = firstFreeGridPos(w.spanX, w.spanY, occupied)
-        val resolved = if (pos != null) w.copy(gridX = pos.first, gridY = pos.second) else w
+        val resolved = if (pos != null) w.copy(gridX = pos.first, gridY = pos.second) else return layout
         result.add(resolved)
         for (dx in 0 until resolved.spanX) for (dy in 0 until resolved.spanY) occupied.add(resolved.gridX + dx to resolved.gridY + dy)
     }

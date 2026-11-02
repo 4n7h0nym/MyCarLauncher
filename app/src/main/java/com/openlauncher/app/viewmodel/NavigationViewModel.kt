@@ -345,7 +345,8 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
     fun editSavedPlace(id: String, newLabel: String, newAddress: String, point: MapboxLocationPoint? = null, iconName: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
-            var finalPoint = point
+            var finalPoint = point ?: _uiState.value.savedPlaces
+                .firstOrNull { it.id == id && it.address == newAddress }?.point
             if (finalPoint == null && newAddress.isNotBlank()) {
                 val mapboxResults = fetchPoiSearchResults(newAddress, null)
                 finalPoint = mapboxResults.firstOrNull()?.point
@@ -358,6 +359,10 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 }.getOrNull()
             }
 
+            if (finalPoint == null) {
+                reportPlaceError()
+                return@launch
+            }
             val updatedList = _uiState.value.savedPlaces.map { place ->
                 if (place.id == id) {
                     place.copy(
@@ -372,11 +377,11 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             }
 
             _uiState.update { it.copy(savedPlaces = updatedList) }
-            updatedList.forEach { navRepository.saveDestination(it) }
+            updatedList.firstOrNull { it.id == id }?.let { navRepository.saveDestination(it) }
         }
     }
 
-    fun addSavedPlace(label: String, address: String, iconName: String, point: MapboxLocationPoint?) {
+    fun addSavedPlace(label: String, address: String, iconName: String, point: MapboxLocationPoint?, id: String = "fav_${System.currentTimeMillis()}") {
         viewModelScope.launch(Dispatchers.IO) {
             var finalPoint = point
             if (finalPoint == null && address.isNotBlank()) {
@@ -384,8 +389,12 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
                 finalPoint = mapboxResults.firstOrNull()?.point
             }
 
+            if (finalPoint == null) {
+                reportPlaceError()
+                return@launch
+            }
             val newPlace = SavedPlace(
-                id = "fav_${System.currentTimeMillis()}",
+                id = id,
                 label = label,
                 iconName = iconName,
                 address = address,
@@ -395,6 +404,19 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             _uiState.update { it.copy(savedPlaces = updatedList) }
             navRepository.saveDestination(newPlace)
         }
+    }
+
+    fun saveAddressPlace(id: String, label: String, address: String) {
+        if (address.isBlank()) { removeSavedPlace(id); return }
+        if (_uiState.value.savedPlaces.any { it.id == id }) editSavedPlace(id, label, address)
+        else addSavedPlace(label, address, if (id == "home") "HOME" else "WORK", null, id)
+    }
+
+    private suspend fun reportPlaceError() = withContext(Dispatchers.Main) {
+        val message = if (java.util.Locale.getDefault().language == "en")
+            "Address not found. Check the address and network, or select a place on the map."
+        else "Adresse introuvable. Vérifiez l’adresse et le réseau, ou choisissez un lieu sur la carte."
+        android.widget.Toast.makeText(getApplication(), message, android.widget.Toast.LENGTH_LONG).show()
     }
 
     fun removeSavedPlace(id: String) {
@@ -436,8 +458,19 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
     // ── CALCUL D'ITINÉRAIRE MAPBOX ──────────────────────────────────────────
 
     private suspend fun calculateFastestRoute(dest: MapboxLocationPoint, currentLocation: LocationData?) {
-        val startLat = currentLocation?.latitude ?: (dest.latitude - 0.02)
-        val startLon = currentLocation?.longitude ?: (dest.longitude - 0.02)
+        if (currentLocation == null || !com.openlauncher.app.util.validCoordinates(currentLocation.latitude, currentLocation.longitude)) {
+            withContext(Dispatchers.Main) {
+                android.widget.Toast.makeText(getApplication(),
+                    if (java.util.Locale.getDefault().language == "en") "Waiting for a GPS fix. Wait before starting guidance."
+                    else "Position GPS indisponible. Attendez un relevé avant de lancer le guidage.",
+                    android.widget.Toast.LENGTH_LONG).show()
+            }
+            _uiState.update { it.copy(isSearching = false, isNavigating = false,
+                nextManeuver = MapboxManeuverInstruction("Position GPS indisponible. Attendez un relevé avant de lancer le guidage.", "STRAIGHT", 0.0)) }
+            return
+        }
+        val startLat = currentLocation.latitude
+        val startLon = currentLocation.longitude
         try {
             val route = OfflineRouteEngine.route(
                 getApplication(),
@@ -631,7 +664,7 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
             val paramsSeparator = if (categoryId != null) "?" else "&"
             val url = URL(
                 "https://api.mapbox.com/search/searchbox/v1/$endpoint" +
-                    "${paramsSeparator}proximity=${loc.longitude},${loc.latitude}&limit=$limit&language=fr&access_token=$token"
+                    "${paramsSeparator}proximity=${loc.longitude},${loc.latitude}&limit=$limit&language=${Locale.getDefault().language}&access_token=$token"
             )
             val connection = (url.openConnection() as HttpURLConnection).apply {
                 connectTimeout = 4000
@@ -824,17 +857,37 @@ class NavigationViewModel(application: Application) : AndroidViewModel(applicati
 
             val currentState = _uiState.value
             val matchesRecents = currentState.recentDestinations.filter { it.name.lowercase().contains(q) || it.address.lowercase().contains(q) }
-            val matchesSaved = currentState.savedPlaces.filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }.map {
+            val matchesSaved = currentState.savedPlaces.filter { it.label.lowercase().contains(q) || it.address.lowercase().contains(q) }.mapNotNull {
                 MapboxPoiResult(
                     id = it.id,
                     name = it.label,
                     category = "Favori",
                     address = it.address,
-                    point = it.point ?: MapboxLocationPoint(48.8566, 2.3522)
+                    point = it.point ?: return@mapNotNull null
                 )
             }
             results.addAll(matchesRecents)
             results.addAll(matchesSaved)
+
+            // Search across downloaded offline regions & presets
+            val offlineRegions = listOf("Paris", "New York", "London", "Tokyo", "Berlin", "Roma", "Madrid")
+            offlineRegions.filter { it.lowercase().contains(q) }.forEachIndexed { idx, regionName ->
+                results.add(
+                    MapboxPoiResult(
+                        id = "offline_region_$idx",
+                        name = regionName,
+                        category = "Région téléchargée (Hors-ligne)",
+                        address = "Région géographique enregistrée",
+                        point = when (regionName) {
+                            "Paris" -> MapboxLocationPoint(48.8566, 2.3522)
+                            "New York" -> MapboxLocationPoint(40.7128, -74.0060)
+                            "London" -> MapboxLocationPoint(51.5074, -0.1278)
+                            else -> MapboxLocationPoint(48.8566, 2.3522)
+                        },
+                        distanceKm = loc?.let { computeDistanceKm(it.latitude, it.longitude, 48.8566, 2.3522) } ?: 0f
+                    )
+                )
+            }
 
             try {
                 val geocoder = Geocoder(getApplication(), Locale.getDefault())

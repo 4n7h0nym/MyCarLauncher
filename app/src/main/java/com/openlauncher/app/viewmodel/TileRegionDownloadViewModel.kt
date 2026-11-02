@@ -52,7 +52,7 @@ class TileRegionDownloadViewModel(application: Application) : AndroidViewModel(a
     private var isRegionSearchActive by mutableStateOf(false)
     private val tileStore: TileStore? = MapboxOptions.mapsOptions.tileStore
     private val activeDownloads = ConcurrentHashMap<String, Cancelable>()
-    private val cancellationRequested = ConcurrentHashMap.newKeySet<String>()
+    private val cancellationRequested = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     private val presetRegions = listOf(
         OfflineRegion(
@@ -344,7 +344,8 @@ class TileRegionDownloadViewModel(application: Application) : AndroidViewModel(a
             region = region,
             downloadingRegions = downloadingRegions,
             onDownloadingRegionsUpdate = { updatedSet ->
-                downloadingRegions = updatedSet
+                // The SDK callback captures an older set; change only this region.
+                downloadingRegions = if (region.id in updatedSet) downloadingRegions + region.id else downloadingRegions - region.id
             },
             onProgress = { regionId, progress ->
                 downloadProgress = downloadProgress + (regionId to progress)
@@ -401,6 +402,12 @@ class TileRegionDownloadViewModel(application: Application) : AndroidViewModel(a
                 regionRemovalErrors = regionRemovalErrors + (region.id to (result.exceptionOrNull()?.message ?: "Suppression impossible"))
             }
         }
+    }
+
+    override fun onCleared() {
+        activeDownloads.values.toList().forEach { it.cancel() }
+        activeDownloads.clear()
+        super.onCleared()
     }
 
     fun clearAllRegions() {

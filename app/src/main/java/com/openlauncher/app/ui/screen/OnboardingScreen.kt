@@ -206,7 +206,7 @@ fun OnboardingScreen(
                 }
 
                 LocalizedLabel(
-                    text = "v0.0.5",
+                    text = "v${com.openlauncher.app.BuildConfig.VERSION_NAME}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 9.sp,
                     letterSpacing = 1.sp
@@ -432,7 +432,7 @@ private fun LanguageStep(
     onSelected: (AppLanguage) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-        OnboardingPageTitle("LANGUE / LANGUAGE", accent)
+        OnboardingPageTitle("LANGUAGE", accent)
         OnboardingPageDescription(
             if (selected == AppLanguage.FRENCH_CANADA)
                 "Choisissez la langue du launcher et de l’assistant vocal. Vous pourrez la modifier plus tard dans les paramètres."
@@ -610,11 +610,11 @@ private fun OfflineRecommendationsStep(
                                 isDownloading -> Row(verticalAlignment = Alignment.CenterVertically) {
                                     LocalizedLabel("${((progress[region.id] ?: 0f) * 100).toInt()}%", color = accent, fontSize = 10.sp)
                                     IconButton(onClick = { onCancel(region) }) {
-                                        Icon(Icons.Default.Close, contentDescription = "Annuler ${region.name}", tint = MaterialTheme.colorScheme.error)
+                                        Icon(Icons.Default.Close, contentDescription = com.openlauncher.app.ui.components.AppLocalization.translate("Cancel", com.openlauncher.app.ui.components.LocalAppLanguage.current) + " " + region.name, tint = MaterialTheme.colorScheme.error)
                                     }
                                 }
                                 else -> IconButton(onClick = { onDownload(region) }) {
-                                    Icon(Icons.Default.Download, contentDescription = "Télécharger ${region.name}", tint = accent)
+                                    Icon(Icons.Default.Download, contentDescription = com.openlauncher.app.ui.components.AppLocalization.translate("Download", com.openlauncher.app.ui.components.LocalAppLanguage.current) + " " + region.name, tint = accent)
                                 }
                             }
                         }

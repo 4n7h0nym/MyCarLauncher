@@ -1,21 +1,23 @@
 package com.openlauncher.app.ui.components
 
-import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openlauncher.app.data.DefaultShortcutIcon
@@ -24,18 +26,6 @@ import com.openlauncher.app.model.MapboxManeuverInstruction
 import com.openlauncher.app.model.NowPlayingState
 import com.openlauncher.app.model.NavDestination
 import com.openlauncher.app.ui.theme.LocalDayMode
-import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-private val ICON_SIZE = 30.dp
-private val VERTICAL_SLOT_SIZE = 64.75.dp
-private val HORIZONTAL_SLOT_SIZE = 82.dp
-private val SIDEBAR_WIDGET_SIDE_MARGIN = 14.dp
-private val SIDEBAR_WIDGET_VERTICAL_MARGIN = 4.dp
-private val SIDEBAR_WIDGET_HEIGHT = 46.dp
-private val HORIZONTAL_BAR_HEIGHT = HORIZONTAL_SLOT_SIZE
 
 @Composable
 fun Sidebar(
@@ -49,277 +39,174 @@ fun Sidebar(
     isRouteActive: Boolean = false,
     nextManeuver: MapboxManeuverInstruction? = null,
     onPlayPause: () -> Unit = {},
-    onSkipNext: () -> Unit = {}
+    onSkipNext: () -> Unit = {},
+    onLaunchFavorite: (Int) -> Unit = {}
 ) {
-    val isDayMode    = LocalDayMode.current
-    val accent       = Color(settings.accentColor)
-    val sidebarBg    = if (isDayMode) Color(0xFFE0E0E0) else Color.Black.copy(alpha = 0.62f)
-    val iconInactive = if (isDayMode) Color(0xFF666666) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.68f)
-    val dividerColor = if (isDayMode) Color(0xFFCCCCCC) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.08f)
-    if (isHorizontal) {
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .height(HORIZONTAL_BAR_HEIGHT)
-                .background(sidebarBg)
-        ) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                NavButton(Icons.Default.Home,       "Home",     currentDest == NavDestination.HOME,        accent, iconInactive, true) { onNavigate(NavDestination.HOME) }
-                NavButton(Icons.Default.Phone,      "Phone",    currentDest == NavDestination.PHONE,       accent, iconInactive, true) { onNavigate(NavDestination.PHONE) }
-                NavButton(Icons.Default.Radio,      "Radio",    currentDest == NavDestination.RADIO,       accent, iconInactive, true) { onNavigate(NavDestination.RADIO) }
-                NavButton(Icons.Default.MusicNote,  "Media",    currentDest == NavDestination.MEDIA,       accent, iconInactive, true) { onNavigate(NavDestination.MEDIA) }
-                NavButton(Icons.Default.Navigation, "Nav",      currentDest == NavDestination.NAVIGATION,  accent, iconInactive, true) { onNavigate(NavDestination.NAVIGATION) }
-            }
-            Row(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                NavButton(Icons.Default.Mic,        "Voice",    false,                                      accent, iconInactive, true, onVoiceAssistant)
-                NavButton(Icons.Default.Apps,       "Apps",     currentDest == NavDestination.APP_LIBRARY, accent, iconInactive, true) { onNavigate(NavDestination.APP_LIBRARY) }
-                NavButton(Icons.Default.CloudDownload, "Offline", currentDest == NavDestination.OFFLINE_MAPS, accent, iconInactive, true) { onNavigate(NavDestination.OFFLINE_MAPS) }
-                NavButton(Icons.Default.Settings,   "Settings", currentDest == NavDestination.SETTINGS,    accent, iconInactive, true) { onNavigate(NavDestination.SETTINGS) }
-            }
-            if (isRouteActive) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .fillMaxWidth()
-                        .padding(
-                            start = HORIZONTAL_SLOT_SIZE * 5 + SIDEBAR_WIDGET_SIDE_MARGIN,
-                            end = HORIZONTAL_SLOT_SIZE * 4 + SIDEBAR_WIDGET_SIDE_MARGIN,
-                            top = SIDEBAR_WIDGET_VERTICAL_MARGIN,
-                            bottom = SIDEBAR_WIDGET_VERTICAL_MARGIN
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(SIDEBAR_WIDGET_HEIGHT)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), MaterialTheme.shapes.medium)
-                            .clickable { onNavigate(NavDestination.NAVIGATION) }
-                            .padding(horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Navigation, contentDescription = null, tint = accent, modifier = Modifier.size(26.dp))
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            LocalizedLabel("PROCHAINE ÉTAPE", style = MaterialTheme.typography.labelSmall, color = accent)
-                            LocalizedLabel(nextManeuver?.instruction ?: "Guidage en cours", maxLines = 1, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
-                }
-            } else if (nowPlaying?.isPlaying == true) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .fillMaxWidth()
-                        .padding(
-                            start = HORIZONTAL_SLOT_SIZE * 5 + SIDEBAR_WIDGET_SIDE_MARGIN,
-                            end = HORIZONTAL_SLOT_SIZE * 4 + SIDEBAR_WIDGET_SIDE_MARGIN,
-                            top = SIDEBAR_WIDGET_VERTICAL_MARGIN,
-                            bottom = SIDEBAR_WIDGET_VERTICAL_MARGIN
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(SIDEBAR_WIDGET_HEIGHT)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), MaterialTheme.shapes.medium)
-                            .clickable { onNavigate(NavDestination.MEDIA) }
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.MusicNote, contentDescription = null, tint = accent, modifier = Modifier.size(24.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            LocalizedLabel(
-                                nowPlaying?.title ?: "Aucune lecture en cours",
-                                maxLines = 1,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            LocalizedLabel(
-                                nowPlaying?.artist?.takeIf { it.isNotBlank() } ?: "Lecteur audio",
-                                maxLines = 1,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = onPlayPause, enabled = nowPlaying != null, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                if (nowPlaying?.isPlaying == true) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (nowPlaying?.isPlaying == true) "Pause" else "Lecture",
-                                tint = accent,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-                        IconButton(onClick = onSkipNext, enabled = nowPlaying != null, modifier = Modifier.size(40.dp)) {
-                            Icon(Icons.Default.SkipNext, contentDescription = "Suivant", tint = accent, modifier = Modifier.size(26.dp))
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        val currentTime by produceState(
-            initialValue = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        ) {
-            while (true) {
-                value = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                delay(1_000L)
-            }
-        }
-        Column(
-            modifier = modifier
-                .width(HORIZONTAL_SLOT_SIZE)
-                .fillMaxHeight()
-                .background(sidebarBg),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            LocalizedLabel(
-                text = currentTime,
-                color = if (isDayMode) Color(0xFF333333) else Color.White,
-                fontSize = 16.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 8.dp)
-            )
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(top = 6.dp, bottom = 2.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                NavButton(
-                    icon         = Icons.Default.Home,
-                    label        = "Home",
-                    isActive     = currentDest == NavDestination.HOME,
-                    accent       = accent,
-                    iconInactive = iconInactive,
-                    isHorizontal = false,
-                    onClick      = { onNavigate(NavDestination.HOME) }
-                )
-                NavButton(
-                    icon         = Icons.Default.Radio,
-                    label        = "Radio",
-                    isActive     = currentDest == NavDestination.RADIO,
-                    accent       = accent,
-                    iconInactive = iconInactive,
-                    isHorizontal = false,
-                    onClick      = { onNavigate(NavDestination.RADIO) }
-                )
-                NavButton(
-                    icon         = Icons.Default.Phone,
-                    label        = "Phone",
-                    isActive     = currentDest == NavDestination.PHONE,
-                    accent       = accent,
-                    iconInactive = iconInactive,
-                    isHorizontal = false,
-                    onClick      = { onNavigate(NavDestination.PHONE) }
-                )
-                NavButton(
-                    icon         = Icons.Default.MusicNote,
-                    label        = "Media",
-                    isActive     = currentDest == NavDestination.MEDIA,
-                    accent       = accent,
-                    iconInactive = iconInactive,
-                    isHorizontal = false,
-                    onClick      = { onNavigate(NavDestination.MEDIA) }
-                )
-                NavButton(
-                    icon         = Icons.Default.Navigation,
-                    label        = "Nav",
-                    isActive     = currentDest == NavDestination.NAVIGATION,
-                    accent       = accent,
-                    iconInactive = iconInactive,
-                    isHorizontal = false,
-                    onClick      = { onNavigate(NavDestination.NAVIGATION) }
-                )
-                HorizontalDivider(color = dividerColor, modifier = Modifier.padding(vertical = 4.dp))
-            }
+    var expanded by remember { mutableStateOf(false) }
+    val colors = MaterialTheme.colorScheme
+    val language = LocalAppLanguage.current
+    val favorite = settings.shortcuts.getOrNull(settings.dockFavoriteSlot)?.takeIf { it.packageName.isNotBlank() }
+    val isDayMode = LocalDayMode.current
+    val sidebarBg = if (isDayMode) Color(0xFFE0E0E0) else Color.Black.copy(alpha = 0.62f)
+    val items: @Composable () -> Unit = {
+        DockButton(Icons.Default.Home, "Home", currentDest == NavDestination.HOME) { onNavigate(NavDestination.HOME) }
+        DockButton(Icons.Default.Navigation, "Nav", currentDest == NavDestination.NAVIGATION) { onNavigate(NavDestination.NAVIGATION) }
+        DockButton(Icons.Default.MusicNote, "Media", currentDest == NavDestination.MEDIA) { onNavigate(NavDestination.MEDIA) }
 
-            HorizontalDivider(color = dividerColor)
-            NavButton(
-                icon = Icons.Default.Mic,
-                label = "Voice",
-                isActive = false,
-                accent = accent,
-                iconInactive = iconInactive,
-                isHorizontal = false,
-                onClick = onVoiceAssistant
-            )
-            NavButton(
-                icon         = Icons.Default.Apps,
-                label        = "Apps",
-                isActive     = currentDest == NavDestination.APP_LIBRARY,
-                accent       = accent,
-                iconInactive = iconInactive,
-                isHorizontal = false,
-                onClick      = { onNavigate(NavDestination.APP_LIBRARY) }
-            )
-            NavButton(
-                icon         = Icons.Default.CloudDownload,
-                label        = "Offline",
-                isActive     = currentDest == NavDestination.OFFLINE_MAPS,
-                accent       = accent,
-                iconInactive = iconInactive,
-                isHorizontal = false,
-                onClick      = { onNavigate(NavDestination.OFFLINE_MAPS) }
-            )
-            NavButton(
-                icon         = Icons.Default.Settings,
-                label        = "Settings",
-                isActive     = currentDest == NavDestination.SETTINGS,
-                accent       = accent,
-                iconInactive = iconInactive,
-                isHorizontal = false,
-                onClick      = { onNavigate(NavDestination.SETTINGS) }
-            )
-        Spacer(Modifier.height(6.dp))
+        if (favorite != null) DockButton((favorite.customIconOverride ?: favorite.defaultIcon).toIcon(), favorite.label, false) { onLaunchFavorite(settings.dockFavoriteSlot) }
+        else DockButton(Icons.Default.Radio, "Radio", currentDest == NavDestination.RADIO) { onNavigate(NavDestination.RADIO) }
+        DockButton(Icons.Default.Contacts, "Contacts", currentDest == NavDestination.PHONE) { onNavigate(NavDestination.PHONE) }
+        DockButton(Icons.Default.Apps, "Apps", currentDest == NavDestination.APP_LIBRARY) { onNavigate(NavDestination.APP_LIBRARY) }
+        Box {
+            DockButton(Icons.Default.MoreHoriz, "More", expanded) { expanded = true }
+            DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+                listOf(Triple("Phone", Icons.Default.Phone, NavDestination.PHONE),
+                    Triple("Radio", Icons.Default.Radio, NavDestination.RADIO),
+                    Triple("Offline", Icons.Default.CloudDownload, NavDestination.OFFLINE_MAPS),
+                    Triple("Settings", Icons.Default.Settings, NavDestination.SETTINGS)).forEach { (label, icon, destination) ->
+                    DropdownMenuItem(text = { LocalizedText(label) }, leadingIcon = { Icon(icon, null) },
+                        modifier = Modifier.heightIn(min = 64.dp), onClick = { expanded = false; onNavigate(destination) })
+                }
+                DropdownMenuItem(text = { LocalizedText("Voice") }, leadingIcon = { Icon(Icons.Default.Mic, null) },
+                    modifier = Modifier.heightIn(min = 64.dp), onClick = { expanded = false; onVoiceAssistant() })
+                if (nowPlaying != null) {
+                    DropdownMenuItem(text = { LocalizedText(if (nowPlaying.isPlaying) "Pause" else "Play") },
+                        modifier = Modifier.heightIn(min = 64.dp), onClick = onPlayPause)
+                    DropdownMenuItem(text = { LocalizedText("Next") }, modifier = Modifier.heightIn(min = 64.dp), onClick = onSkipNext)
+                }
+                if (isRouteActive) DropdownMenuItem(text = { Text(nextManeuver?.instruction ?: AppLocalization.translate("Nav", language)) },
+                    modifier = Modifier.heightIn(min = 64.dp), onClick = { expanded = false; onNavigate(NavDestination.NAVIGATION) })
+            }
         }
     }
+    if (isHorizontal) {
+        BoxWithConstraints(modifier.fillMaxWidth().height(88.dp)
+            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)).background(colors.surface)) {
+            // Keep both shortcut groups symmetric; allocate all remaining width to the widget.
+            // Only scroll when the actual width cannot accommodate the touch targets.
+            val contentWidth = maxOf(maxWidth, if (isRouteActive || nowPlaying != null) 1032.dp else 848.dp)
+            Row(Modifier.fillMaxSize().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.width(contentWidth).fillMaxHeight().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            // Left items
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                DockButton(Icons.Default.Home, "Home", currentDest == NavDestination.HOME) { onNavigate(NavDestination.HOME) }
+                DockButton(Icons.Default.Navigation, "Nav", currentDest == NavDestination.NAVIGATION) { onNavigate(NavDestination.NAVIGATION) }
+                DockButton(Icons.Default.MusicNote, "Media", currentDest == NavDestination.MEDIA) { onNavigate(NavDestination.MEDIA) }
+                if (favorite != null) DockButton((favorite.customIconOverride ?: favorite.defaultIcon).toIcon(), favorite.label, false) { onLaunchFavorite(settings.dockFavoriteSlot) }
+                else DockButton(Icons.Default.Radio, "Radio", currentDest == NavDestination.RADIO) { onNavigate(NavDestination.RADIO) }
+                DockButton(Icons.Default.Contacts, "Contacts", currentDest == NavDestination.PHONE) { onNavigate(NavDestination.PHONE) }
 
+            }
+
+            Box(Modifier.weight(1f).padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
+                // Contextual running widget
+                if (isRouteActive) {
+                    val navigationBackground = colors.primaryContainer
+                    val navigationForeground = com.openlauncher.app.ui.theme.contrastForeground(navigationBackground)
+                    Surface(
+                        onClick = { onNavigate(NavDestination.NAVIGATION) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = navigationBackground,
+                        contentColor = navigationForeground,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(navigationManeuverIcon(nextManeuver?.iconType), null, tint = navigationForeground, modifier = Modifier.size(40.dp))
+                            Text(
+                                text = nextManeuver?.instruction?.takeIf { it.isNotBlank() }
+                                    ?: AppLocalization.translate("Guidage en cours", language),
+                                modifier = Modifier.weight(1f),
+                                color = navigationForeground,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.SansSerif,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                fontSize = 20.sp,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.SansSerif,
+                                    lineHeight = 24.sp
+                                ),
+                                maxLines = 2,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                } else if (nowPlaying != null) {
+                    Surface(
+                        onClick = { onNavigate(NavDestination.MEDIA) },
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+                        modifier = Modifier.fillMaxWidth().height(64.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(nowPlaying.title.ifBlank { "Musique" }, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, color = colors.onSecondaryContainer, style = MaterialTheme.typography.titleMedium)
+                                Text(nowPlaying.artist.ifBlank { "Lecteur audio" }, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium, color = colors.onSecondaryContainer)
+                            }
+                            IconButton(onClick = onPlayPause, modifier = Modifier.size(48.dp)) {
+                                Icon(
+                                    if (nowPlaying.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = AppLocalization.translate(if (nowPlaying.isPlaying) "Pause" else "Play", language),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Match the left group's width so the contextual widget remains centered.
+            Row(
+                modifier = Modifier.width(412.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
+            ) {
+                DockButton(Icons.Default.Mic, "Voice", false, onVoiceAssistant)
+                DockButton(Icons.Default.Apps, "Apps", currentDest == NavDestination.APP_LIBRARY) { onNavigate(NavDestination.APP_LIBRARY) }
+                DockButton(Icons.Default.CloudDownload, "Offline", currentDest == NavDestination.OFFLINE_MAPS) { onNavigate(NavDestination.OFFLINE_MAPS) }
+                DockButton(Icons.Default.Settings, "Settings", currentDest == NavDestination.SETTINGS) { onNavigate(NavDestination.SETTINGS) }
+            }
+        }
+        }
+        }
+    } else {
+        Column(
+            modifier = modifier
+                .width(88.dp)
+                .fillMaxHeight()
+                .background(sidebarBg)
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 8.dp),
+            verticalArrangement = Arrangement.SpaceEvenly,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            items()
+        }
+    }
 }
+
 @Composable
-private fun NavButton(
-    icon: ImageVector,
-    label: String,
-    isActive: Boolean,
-    accent: Color,
-    iconInactive: Color,
-    isHorizontal: Boolean = false,
-    onClick: () -> Unit
-) {
-    val isDayMode = LocalDayMode.current
-    val activeIconColor = if (isDayMode) Color(0xFF111111) else Color.White
-    val activeBg = if (isDayMode) Color(0xFF000000).copy(alpha = 0.08f) else Color.White.copy(alpha = 0.06f)
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .then(
-                if (isHorizontal) Modifier.fillMaxHeight().width(HORIZONTAL_SLOT_SIZE)
-                else              Modifier.fillMaxWidth().height(VERTICAL_SLOT_SIZE)
-            )
-            .background(if (isActive) activeBg else Color.Transparent)
-            .clickable(onClick = onClick)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = if (isActive) activeIconColor else iconInactive,
-            modifier = Modifier.size(ICON_SIZE)
-        )
+private fun DockButton(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(Modifier.size(76.dp).clip(RoundedCornerShape(24.dp))
+        .background(if (active) colors.secondaryContainer else Color.Transparent)
+        .semantics { selected = active }.clickable(onClick = onClick), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Icon(icon, AppLocalization.translate(label, LocalAppLanguage.current), Modifier.size(32.dp),
+                tint = if (active) colors.primary else colors.onSurfaceVariant)
+            if (active) Box(Modifier.size(16.dp, 3.dp).background(colors.primary, RoundedCornerShape(2.dp)))
+        }
     }
 }
 
@@ -359,4 +246,22 @@ fun DefaultShortcutIcon.toIcon(): ImageVector = when (this) {
     // Web / location
     DefaultShortcutIcon.GLOBE       -> Icons.Default.Language
     DefaultShortcutIcon.NONE        -> Icons.Default.Apps
+}
+
+/** Mapbox provides the maneuver type and modifier; never infer direction from translated text. */
+private fun navigationManeuverIcon(iconType: String?): ImageVector {
+    val type = iconType.orEmpty().uppercase(java.util.Locale.ROOT).replace('_', ' ').replace('-', ' ')
+    return when {
+        type.contains("ARRIV") -> Icons.Default.Flag
+        type.contains("ROUNDABOUT") || type.contains("ROTARY") -> Icons.Default.RoundaboutRight
+        type.contains("UTURN") || type.contains("U TURN") -> Icons.Default.UTurnLeft
+        type.contains("SHARP RIGHT") -> Icons.Default.TurnSharpRight
+        type.contains("SHARP LEFT") -> Icons.Default.TurnSharpLeft
+        type.contains("SLIGHT RIGHT") -> Icons.Default.TurnSlightRight
+        type.contains("SLIGHT LEFT") -> Icons.Default.TurnSlightLeft
+        type.contains("RIGHT") -> Icons.Default.TurnRight
+        type.contains("LEFT") -> Icons.Default.TurnLeft
+        type.contains("STRAIGHT") || type.contains("CONTINUE") || type.contains("DEPART") -> Icons.Default.Straight
+        else -> Icons.Default.Navigation
+    }
 }

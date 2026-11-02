@@ -2,7 +2,6 @@ package com.openlauncher.app.ui.widget
 
 import com.openlauncher.app.ui.components.LocalizedText as LocalizedLabel
 
-import android.R
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -39,18 +38,19 @@ fun AltimeterWidget(
     val iconTint = if (isDayMode) Color(0xFF333333) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.85f)
     val labelColor = if (isDayMode) Color(0xFF888888) else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.30f)
     val context = LocalContext.current
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
 
     // Accelerometer sensor state
     var rollDeg  by remember { mutableFloatStateOf(0f) }
     var pitchDeg by remember { mutableFloatStateOf(0f) }
-    val gravBuf  = remember { FloatArray(3) { 0f } }
+    val gravBuf  = remember { FloatArray(3) }
     var hasSensor by remember { mutableStateOf(false) }
 
     // GPS fallback state for sensor-less devices
     var lastLoc by remember { mutableStateOf<LocationData?>(null) }
     var gpsPitch by remember { mutableFloatStateOf(0f) }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(lifecycle) {
         val sm = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
@@ -69,10 +69,21 @@ fun AltimeterWidget(
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
-        sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
-            sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
+        fun register() {
+            sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
+                sm.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
+            }
         }
-        onDispose { sm.unregisterListener(listener) }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_START -> register()
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> sm.unregisterListener(listener)
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) register()
+        onDispose { lifecycle.removeObserver(observer); sm.unregisterListener(listener) }
     }
 
     // Mathematical GPS incline (pitch) calculation when offline/no accelerometer

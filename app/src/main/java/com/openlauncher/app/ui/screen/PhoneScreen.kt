@@ -13,6 +13,7 @@ import android.provider.ContactsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Backspace
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -32,7 +34,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.unit.Dp
+import coil.compose.AsyncImage
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -110,10 +116,13 @@ private fun ContactsPanel(
                     val contactKey = BluetoothContactsRepository.phoneKey(contact.phoneNumber)
                     ListItem(
                         headlineContent = {
-                            LocalizedLabel(contact.name, maxLines = 1, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                            androidx.compose.material3.Text(contact.name, maxLines = 1, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                         },
                         supportingContent = {
-                            LocalizedLabel(contact.phoneNumber, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            androidx.compose.material3.Text(contact.phoneNumber, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        leadingContent = {
+                            ContactAvatar(name = contact.name, photoUri = contact.photoUri, accent = accent)
                         },
                         modifier = Modifier.fillMaxWidth().clickable { onCall(contact.phoneNumber) },
                         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
@@ -226,61 +235,69 @@ fun PhoneScreen(
     }
 
     Column(
-        modifier = modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = modifier.fillMaxSize().padding(8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Header & Tabs
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Contacts, null, tint = accent)
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    LocalizedLabel("Téléphone", style = MaterialTheme.typography.titleLarge, color = accent, fontWeight = FontWeight.Bold)
-                    LocalizedLabel("Contacts synchronisés depuis le téléphone Bluetooth (PBAP)", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
                     label = { LocalizedLabel("Clavier & Répertoire") },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accent, selectedLabelColor = Color.Black)
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accent, selectedLabelColor = MaterialTheme.colorScheme.onPrimary)
                 )
                 FilterChip(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
                     label = { LocalizedLabel("Favoris (${favoriteContacts.size})") },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accent, selectedLabelColor = Color.Black)
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = accent, selectedLabelColor = MaterialTheme.colorScheme.onPrimary)
                 )
                 IconButton(onClick = {
-                    // The refresh icon should run the same Jancar PBAP Binder
-                    // request used during startup, not only reread Android's
-                    // local ContactsProvider.
                     JancarBluetoothManager.requestContacts(force = true)
                     refreshToken++
                 }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Actualiser les contacts", tint = accent)
+                    Icon(Icons.Default.Download, contentDescription = "Télécharger les contacts", tint = accent)
                 }
             }
         }
 
         if (selectedTab == 0) {
-            OutlinedTextField(
-                value = dialText,
-                onValueChange = { dialText = it },
-                modifier = Modifier.fillMaxWidth(0.7f),
-                singleLine = true,
-                placeholder = { LocalizedLabel("Nom ou numéro") },
-                trailingIcon = {
-                    if (dialText.isNotEmpty()) IconButton(onClick = { dialText = "" }) {
-                        Icon(Icons.Default.Backspace, contentDescription = "Effacer")
-                    }
-                },
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Phone),
-                shape = RoundedCornerShape(16.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(0.9f),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = dialText,
+                    onValueChange = { dialText = it },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    placeholder = { LocalizedLabel("Nom ou numéro") },
+                    trailingIcon = {
+                        if (dialText.isNotEmpty()) IconButton(onClick = { dialText = "" }) {
+                            Icon(Icons.Default.Backspace, contentDescription = "Effacer")
+                        }
+                    },
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = KeyboardType.Phone),
+                    shape = RoundedCornerShape(16.dp)
+                )
+
+                Button(
+                    onClick = {
+                        JancarBluetoothManager.requestContacts(force = true)
+                        refreshToken++
+                    },
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = accent),
+                    modifier = Modifier.height(56.dp)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    LocalizedLabel("TÉLÉCHARGER", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
 
             BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxWidth()
@@ -397,10 +414,10 @@ fun PhoneScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Icon(Icons.Default.Star, null, tint = Color(0xFFFFC107), modifier = Modifier.size(24.dp))
+                                        ContactAvatar(name = contact.name, photoUri = contact.photoUri, accent = accent, size = 40.dp)
                                         Column {
-                                            LocalizedLabel(contact.name, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                            LocalizedLabel(contact.phoneNumber, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
+                                            androidx.compose.material3.Text(contact.name, color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                            androidx.compose.material3.Text(contact.phoneNumber, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
                                         }
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -423,6 +440,48 @@ fun PhoneScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun ContactAvatar(
+    name: String,
+    photoUri: String?,
+    accent: Color,
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp
+) {
+    val initials = remember(name) {
+        name.split(" ")
+            .filter { it.isNotBlank() }
+            .take(2)
+            .map { it.first().uppercase() }
+            .joinToString("")
+            .ifBlank { "?" }
+    }
+
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(accent.copy(alpha = 0.2f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (!photoUri.isNullOrBlank()) {
+            AsyncImage(
+                model = Uri.parse(photoUri),
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            LocalizedLabel(
+                text = initials,
+                color = accent,
+                fontSize = (size.value * 0.38f).sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

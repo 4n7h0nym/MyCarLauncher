@@ -23,6 +23,7 @@ abstract class NavigationDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): NavigationDatabase {
             return INSTANCE ?: synchronized(this) {
+                INSTANCE?.let { return@synchronized it }
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     NavigationDatabase::class.java,

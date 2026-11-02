@@ -90,9 +90,5 @@ data class NavigationUiState(
     val offlineCacheStatus: String = "Cache hors-ligne Mapbox TileStore actif",
 
     // Favoris et lieux enregistrés
-    val savedPlaces: List<SavedPlace> = listOf(
-        SavedPlace("home", "Domicile", "HOME", "Avenue des Champs-Élysées, Paris", MapboxLocationPoint(48.8698, 2.3075)),
-        SavedPlace("work", "Travail", "WORK", "La Défense, Paris", MapboxLocationPoint(48.8924, 2.2361)),
-        SavedPlace("fav_gym", "Salle de sport", "STAR", "Place de la Bastille, Paris", MapboxLocationPoint(48.8530, 2.3691))
-    )
+    val savedPlaces: List<SavedPlace> = emptyList()
 )

@@ -15,10 +15,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -48,6 +49,35 @@ fun TripTrackerWidget(
     val activeAccent = accent
     val teRed = Color(0xFFFF2D55) // Still useful for Reset/Stopped indicator
     val teGrey = if (isDayMode) Color(0xFFCCCCCC) else Color(0xFF2E3238)
+
+    // The dotted LCD texture covers a large area. Cache it as one path per size
+    // and theme instead of issuing thousands of drawCircle calls on every timer
+    // or GPS-driven redraw.
+    val lcdDotPattern = remember(displayColor) {
+        Modifier.drawWithCache {
+            val radius = 0.5.dp.toPx()
+            val spacing = 5.dp.toPx()
+            val dots = Path()
+            var x = 3.dp.toPx()
+            while (x < size.width) {
+                var y = 3.dp.toPx()
+                while (y < size.height) {
+                    dots.addOval(
+                        androidx.compose.ui.geometry.Rect(
+                            left = x - radius,
+                            top = y - radius,
+                            right = x + radius,
+                            bottom = y + radius
+                        )
+                    )
+                    y += spacing
+                }
+                x += spacing
+            }
+            val dotColor = displayColor.copy(alpha = 0.02f)
+            onDrawBehind { drawPath(dots, dotColor) }
+        }
+    }
 
     var isRunning by rememberSaveable { mutableStateOf(false) }
     var driveTimeSeconds by rememberSaveable { mutableLongStateOf(0L) }
@@ -117,7 +147,7 @@ fun TripTrackerWidget(
 
     // Playful local test simulation loop (triggers when tapping speed layout while READY)
     LaunchedEffect(isSimulating) {
-        if (isSimulating) {
+        if (com.openlauncher.app.BuildConfig.DEBUG && isSimulating) {
             accelStartTime = android.os.SystemClock.elapsedRealtime()
             accelState = "RUNNING"
             val simTarget = if (isMetric) 100f else 60f
@@ -191,24 +221,7 @@ fun TripTrackerWidget(
                 .clip(RoundedCornerShape(6.dp))
                 .background(lcdBg)
                 .border(1.dp, lcdBorder, RoundedCornerShape(6.dp))
-                .drawBehind {
-                    val dotColor = displayColor.copy(alpha = 0.02f)
-                    val dotSize = 1.dp.toPx()
-                    val gap = 5.dp.toPx()
-                    var x = 3.dp.toPx()
-                    while (x < size.width) {
-                        var y = 3.dp.toPx()
-                        while (y < size.height) {
-                            drawCircle(
-                                color = dotColor,
-                                radius = dotSize / 2,
-                                center = Offset(x, y)
-                            )
-                            y += gap
-                        }
-                        x += gap
-                    }
-                }
+                .then(lcdDotPattern)
                 .padding(horizontal = 10.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -433,7 +446,7 @@ fun TripTrackerWidget(
                 Column(
                     modifier = Modifier
                         .weight(0.52f)
-                        .clickable(enabled = accelState == "READY") {
+                        .clickable(enabled = com.openlauncher.app.BuildConfig.DEBUG && accelState == "READY") {
                             isSimulating = true
                         },
                     verticalArrangement = Arrangement.SpaceBetween,
@@ -481,8 +494,8 @@ fun TripTrackerWidget(
                     
                     Column(horizontalAlignment = Alignment.End) {
                         LocalizedLabel(
-                            text = if (accelState == "READY" && !isSimulating) "TAP SPEED TO TEST" else "BEST RECORD",
-                            color = if (accelState == "READY" && !isSimulating) activeAccent.copy(alpha = 0.7f) else labelColor,
+                            text = if (com.openlauncher.app.BuildConfig.DEBUG && accelState == "READY" && !isSimulating) "TAP SPEED TO TEST" else "BEST RECORD",
+                            color = if (com.openlauncher.app.BuildConfig.DEBUG && accelState == "READY" && !isSimulating) activeAccent.copy(alpha = 0.7f) else labelColor,
                             fontSize = 5.5.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold

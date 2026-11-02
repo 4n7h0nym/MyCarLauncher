@@ -108,6 +108,7 @@ class MediaListenerService : NotificationListenerService() {
 
     override fun onDestroy() {
         instance = null
+        isConnected.value = false
         unregisterSessionsListener()
         unregisterMediaBroadcasts()
         clearController()
@@ -276,7 +277,7 @@ class MediaListenerService : NotificationListenerService() {
         // notification would force a recomposition + art redraw.
         val prev = _nowPlaying.value
         val resolvedArt = art ?: prev?.albumArt?.takeIf {
-            prev.controller?.sessionToken == controller.sessionToken
+            prev.controller?.sessionToken == controller.sessionToken && prev.title == title && prev.artist == artist
         }
         if (prev != null &&
             prev.controller?.sessionToken == controller.sessionToken &&
@@ -304,6 +305,7 @@ class MediaListenerService : NotificationListenerService() {
         @Volatile var announceIncomingMessages: Boolean = false
         @Volatile var voiceLanguageTag: String = "fr-CA"
             set(value) {
+                if (field == value) return
                 field = value
                 instance?.messageTts?.setLanguage(value)
             }
